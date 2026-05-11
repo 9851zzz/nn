@@ -1,35 +1,36 @@
 #!/usr/bin/env python
 # coding: utf-8
 # =============================================================================
-# 基于 PyTorch 的 CNN 实现 —— MNIST 手写数字识别（完善优化版）
+# 基于 PyTorch 的 CNN 实现 —— MNIST 手写数字识别（优化版）
 #
 # 功能特点：
 #   1. 自动选择 CUDA / Apple MPS / CPU
 #   2. 固定随机种子，提高可复现性
 #   3. MNIST 标准均值方差归一化
 #   4. 训练集数据增强：随机旋转、平移、缩放
-#   5. 三段式 CNN：Conv + BN + ReLU + Pool + Dropout
-#   6. Kaiming 初始化
-#   7. AdamW + CosineAnnealingLR
-#   8. CrossEntropyLoss + Label Smoothing
-#   9. CUDA 下自动使用 AMP 混合精度训练
-#  10. 梯度裁剪，提升训练稳定性
-#  11. 完整测试集评估
-#  12. 自动保存最佳模型
-#  13. 支持加载最佳模型再次测试
+#   5. 使用训练集 / 验证集 / 测试集三部分，更规范
+#   6. 三段式 CNN：Conv + BN + ReLU + Pool + Dropout
+#   7. Kaiming 初始化
+#   8. AdamW + CosineAnnealingLR
+#   9. CrossEntropyLoss + Label Smoothing
+#  10. CUDA 下自动使用 AMP 混合精度训练
+#  11. 梯度裁剪，提升训练稳定性
+#  12. 根据验证集准确率自动保存最佳模型
+#  13. 支持加载最佳模型并在测试集上最终评估
 # =============================================================================
 
 import os
 import time
 import random
 from pathlib import Path
-from typing import Tuple, Dict, Any
+from contextlib import nullcontext
+from typing import Tuple, Dict, Any, Optional
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torchvision
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from torchvision import transforms
 
 
@@ -52,11 +53,19 @@ class Config:
     LABEL_SMOOTHING = 0.1
     GRAD_CLIP_NORM = 5.0
 
+    # 验证集比例
+    VAL_RATIO = 0.1
+
     # DataLoader 配置
-    NUM_WORKERS = 2
+    # Windows + PyCharm 下 NUM_WORKERS=0 最稳定
+    # 如果运行稳定，可以改成 2 或 4
+    NUM_WORKERS = 0
 
     # 随机种子
     SEED = 42
+
+    # 日志打印间隔
+    LOG_INTERVAL = 100
 
     # 是否在训练结束后加载最佳模型并重新测试
     TEST_BEST_AFTER_TRAIN = True
@@ -96,9 +105,9 @@ def set_seed(seed: int = 42) -> None:
         torch.cuda.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
 
-        # 可复现性增强
-        torch.backends.cudnn.deterministic = False
-        torch.backends.cudnn.benchmark = True
+        # 更强调可复现性
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
 
 def ensure_dir(path: str) -> None:
@@ -110,6 +119,31 @@ def get_checkpoint_path() -> str:
     """获取最佳模型保存路径。"""
     ensure_dir(cfg.SAVE_DIR)
     return os.path.join(cfg.SAVE_DIR, cfg.CKPT_NAME)
+
+
+def create_grad_scaler(device: torch.device) -> Optional[Any]:
+    """创建 AMP GradScaler，兼容新版和旧版 PyTorch。"""
+    if device.type != "cuda":
+        return None
+
+    if hasattr(torch, "amp") and hasattr(torch.amp, "GradScaler"):
+        try:
+            return torch.amp.GradScaler("cuda", enabled=True)
+        except TypeError:
+            return torch.amp.GradScaler(enabled=True)
+
+    return torch.cuda.amp.GradScaler(enabled=True)
+
+
+def autocast_context(device: torch.device):
+    """创建 AMP autocast 上下文，兼容新版和旧版 PyTorch。"""
+    if device.type != "cuda":
+        return nullcontext()
+
+    if hasattr(torch, "amp") and hasattr(torch.amp, "autocast"):
+        return torch.amp.autocast(device_type="cuda", enabled=True)
+
+    return torch.cuda.amp.autocast(enabled=True)
 
 
 # =============================================================================
@@ -128,34 +162,64 @@ def build_transforms() -> Tuple[transforms.Compose, transforms.Compose]:
         transforms.Normalize(cfg.MNIST_MEAN, cfg.MNIST_STD),
     ])
 
-    test_transform = transforms.Compose([
+    eval_transform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize(cfg.MNIST_MEAN, cfg.MNIST_STD),
     ])
 
-    return train_transform, test_transform
+    return train_transform, eval_transform
 
 
-def build_dataloaders() -> Tuple[DataLoader, DataLoader]:
-    """构建 MNIST 训练集和测试集 DataLoader。"""
+def build_dataloaders() -> Tuple[DataLoader, DataLoader, DataLoader]:
+    """
+    构建 MNIST 训练集、验证集和测试集 DataLoader。
 
-    train_transform, test_transform = build_transforms()
+    说明：
+        train_loader 使用数据增强；
+        val_loader 不使用数据增强；
+        test_loader 不使用数据增强。
+    """
 
-    train_set = torchvision.datasets.MNIST(
+    train_transform, eval_transform = build_transforms()
+
+    # 用于训练的数据集，带数据增强
+    full_train_aug = torchvision.datasets.MNIST(
         root=cfg.DATA_DIR,
         train=True,
         transform=train_transform,
         download=True,
     )
 
-    test_set = torchvision.datasets.MNIST(
+    # 用于验证的数据集，不带数据增强
+    full_train_eval = torchvision.datasets.MNIST(
         root=cfg.DATA_DIR,
-        train=False,
-        transform=test_transform,
+        train=True,
+        transform=eval_transform,
         download=True,
     )
 
+    test_set = torchvision.datasets.MNIST(
+        root=cfg.DATA_DIR,
+        train=False,
+        transform=eval_transform,
+        download=True,
+    )
+
+    total_size = len(full_train_aug)
+    val_size = int(total_size * cfg.VAL_RATIO)
+    train_size = total_size - val_size
+
+    generator = torch.Generator().manual_seed(cfg.SEED)
+    indices = torch.randperm(total_size, generator=generator).tolist()
+
+    val_indices = indices[:val_size]
+    train_indices = indices[val_size:]
+
+    train_set = Subset(full_train_aug, train_indices)
+    val_set = Subset(full_train_eval, val_indices)
+
     pin_memory = DEVICE.type == "cuda"
+    persistent_workers = cfg.NUM_WORKERS > 0
 
     train_loader = DataLoader(
         train_set,
@@ -164,7 +228,17 @@ def build_dataloaders() -> Tuple[DataLoader, DataLoader]:
         num_workers=cfg.NUM_WORKERS,
         pin_memory=pin_memory,
         drop_last=False,
-        persistent_workers=cfg.NUM_WORKERS > 0,
+        persistent_workers=persistent_workers,
+    )
+
+    val_loader = DataLoader(
+        val_set,
+        batch_size=cfg.TEST_BATCH_SIZE,
+        shuffle=False,
+        num_workers=cfg.NUM_WORKERS,
+        pin_memory=pin_memory,
+        drop_last=False,
+        persistent_workers=persistent_workers,
     )
 
     test_loader = DataLoader(
@@ -174,10 +248,14 @@ def build_dataloaders() -> Tuple[DataLoader, DataLoader]:
         num_workers=cfg.NUM_WORKERS,
         pin_memory=pin_memory,
         drop_last=False,
-        persistent_workers=cfg.NUM_WORKERS > 0,
+        persistent_workers=persistent_workers,
     )
 
-    return train_loader, test_loader
+    print(f"训练集样本数: {train_size}")
+    print(f"验证集样本数: {val_size}")
+    print(f"测试集样本数: {len(test_set)}")
+
+    return train_loader, val_loader, test_loader
 
 
 # =============================================================================
@@ -319,8 +397,8 @@ def train_one_epoch(
     train_loader: DataLoader,
     loss_fn: nn.Module,
     optimizer: torch.optim.Optimizer,
-    scheduler: torch.optim.lr_scheduler._LRScheduler,
-    scaler: torch.cuda.amp.GradScaler,
+    scheduler: Any,
+    scaler: Optional[Any],
     epoch: int,
 ) -> Tuple[float, float]:
     """训练一个 epoch。"""
@@ -340,7 +418,7 @@ def train_one_epoch(
         optimizer.zero_grad(set_to_none=True)
 
         if use_amp:
-            with torch.cuda.amp.autocast():
+            with autocast_context(DEVICE):
                 logits = model(images)
                 loss = loss_fn(logits, labels)
 
@@ -377,7 +455,7 @@ def train_one_epoch(
         total_correct += (logits.argmax(dim=1) == labels).sum().item()
         total_samples += batch_size
 
-        if step % 100 == 0 or step == len(train_loader):
+        if step % cfg.LOG_INTERVAL == 0 or step == len(train_loader):
             current_lr = optimizer.param_groups[0]["lr"]
             train_loss = total_loss / total_samples
             train_acc = total_correct / total_samples
@@ -399,24 +477,30 @@ def train_one_epoch(
 def save_checkpoint(
     model: nn.Module,
     optimizer: torch.optim.Optimizer,
+    scheduler: Any,
     epoch: int,
-    test_acc: float,
+    val_acc: float,
     path: str,
 ) -> None:
     """保存模型检查点。"""
 
     checkpoint = {
         "epoch": epoch,
-        "test_acc": test_acc,
+        "val_acc": val_acc,
         "model_state_dict": model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
+        "scheduler_state_dict": scheduler.state_dict(),
         "config": {
             "epochs": cfg.EPOCHS,
             "batch_size": cfg.BATCH_SIZE,
+            "test_batch_size": cfg.TEST_BATCH_SIZE,
             "learning_rate": cfg.LEARNING_RATE,
             "weight_decay": cfg.WEIGHT_DECAY,
             "dropout": cfg.DROPOUT,
             "label_smoothing": cfg.LABEL_SMOOTHING,
+            "grad_clip_norm": cfg.GRAD_CLIP_NORM,
+            "val_ratio": cfg.VAL_RATIO,
+            "seed": cfg.SEED,
         },
     }
 
@@ -438,7 +522,7 @@ def load_checkpoint(
 def train(
     model: nn.Module,
     train_loader: DataLoader,
-    test_loader: DataLoader,
+    val_loader: DataLoader,
 ) -> float:
     """完整训练流程。"""
 
@@ -457,10 +541,7 @@ def train(
         label_smoothing=cfg.LABEL_SMOOTHING,
     )
 
-    scaler = torch.cuda.amp.GradScaler(
-        enabled=DEVICE.type == "cuda",
-    )
-
+    scaler = create_grad_scaler(DEVICE)
     ckpt_path = get_checkpoint_path()
 
     print("=" * 80)
@@ -468,18 +549,19 @@ def train(
     print("=" * 80)
     print(f"设备              : {DEVICE}")
     print(f"训练样本数        : {len(train_loader.dataset)}")
-    print(f"测试样本数        : {len(test_loader.dataset)}")
+    print(f"验证样本数        : {len(val_loader.dataset)}")
     print(f"Epochs            : {cfg.EPOCHS}")
     print(f"Batch Size        : {cfg.BATCH_SIZE}")
     print(f"Learning Rate     : {cfg.LEARNING_RATE}")
     print(f"Weight Decay      : {cfg.WEIGHT_DECAY}")
     print(f"Dropout           : {cfg.DROPOUT}")
     print(f"Label Smoothing   : {cfg.LABEL_SMOOTHING}")
+    print(f"Grad Clip Norm    : {cfg.GRAD_CLIP_NORM}")
     print(f"AMP               : {DEVICE.type == 'cuda'}")
     print(f"Checkpoint Path   : {ckpt_path}")
     print("=" * 80)
 
-    best_acc = 0.0
+    best_val_acc = 0.0
 
     for epoch in range(1, cfg.EPOCHS + 1):
         start_time = time.time()
@@ -494,9 +576,9 @@ def train(
             epoch=epoch,
         )
 
-        test_loss, test_acc = evaluate(
+        val_loss, val_acc = evaluate(
             model=model,
-            data_loader=test_loader,
+            data_loader=val_loader,
             loss_fn=loss_fn,
         )
 
@@ -508,31 +590,32 @@ def train(
             f"| 用时: {elapsed:.1f}s "
             f"| Train Loss: {train_loss:.4f} "
             f"| Train Acc: {train_acc * 100:.2f}% "
-            f"| Test Loss: {test_loss:.4f} "
-            f"| Test Acc: {test_acc * 100:.2f}%"
+            f"| Val Loss: {val_loss:.4f} "
+            f"| Val Acc: {val_acc * 100:.2f}%"
         )
 
-        if test_acc > best_acc:
-            best_acc = test_acc
+        if val_acc > best_val_acc:
+            best_val_acc = val_acc
 
             save_checkpoint(
                 model=model,
                 optimizer=optimizer,
+                scheduler=scheduler,
                 epoch=epoch,
-                test_acc=test_acc,
+                val_acc=val_acc,
                 path=ckpt_path,
             )
 
-            print(f"发现新的最佳模型，准确率: {best_acc * 100:.2f}%")
+            print(f"发现新的最佳模型，验证集准确率: {best_val_acc * 100:.2f}%")
             print(f"模型已保存到: {ckpt_path}")
 
         print("-" * 80)
 
     print("=" * 80)
-    print(f"训练完成，最佳测试准确率: {best_acc * 100:.2f}%")
+    print(f"训练完成，最佳验证集准确率: {best_val_acc * 100:.2f}%")
     print("=" * 80)
 
-    return best_acc
+    return best_val_acc
 
 
 # =============================================================================
@@ -559,7 +642,12 @@ def predict_single_image(
     if image.dim() == 3:
         image = image.unsqueeze(0)
 
-    image = image.to(DEVICE)
+    if image.dim() != 4:
+        raise ValueError(
+            f"输入图片维度应为 [1, 28, 28] 或 [1, 1, 28, 28]，当前为 {tuple(image.shape)}"
+        )
+
+    image = image.to(DEVICE, non_blocking=True)
     logits = model(image)
     pred = logits.argmax(dim=1).item()
 
@@ -572,7 +660,7 @@ def predict_single_image(
 def main() -> None:
     set_seed(cfg.SEED)
 
-    train_loader, test_loader = build_dataloaders()
+    train_loader, val_loader, test_loader = build_dataloaders()
 
     model = CNN(
         num_classes=10,
@@ -591,7 +679,7 @@ def main() -> None:
     train(
         model=model,
         train_loader=train_loader,
-        test_loader=test_loader,
+        val_loader=val_loader,
     )
 
     if cfg.TEST_BEST_AFTER_TRAIN:
@@ -618,9 +706,9 @@ def main() -> None:
 
             print("=" * 80)
             print(f"最佳模型来自 Epoch: {checkpoint['epoch']}")
-            print(f"保存时测试准确率  : {checkpoint['test_acc'] * 100:.2f}%")
-            print(f"重新测试 Loss     : {final_loss:.4f}")
-            print(f"重新测试 Acc      : {final_acc * 100:.2f}%")
+            print(f"保存时验证集准确率: {checkpoint['val_acc'] * 100:.2f}%")
+            print(f"最终测试 Loss     : {final_loss:.4f}")
+            print(f"最终测试 Acc      : {final_acc * 100:.2f}%")
             print("=" * 80)
         else:
             print("未找到最佳模型文件，跳过最终测试。")
