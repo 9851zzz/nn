@@ -1,22 +1,15 @@
 #!/usr/bin/env python
 # coding: utf-8
 # =============================================================================
-# 基于 PyTorch 的 CNN 实现 —— MNIST 手写数字识别（优化版）
+# 基于 PyTorch 的 CNN 实现 —— MNIST 手写数字识别（轻量优化版）
 #
-# 功能特点：
-#   1. 自动选择 CUDA / Apple MPS / CPU
-#   2. 固定随机种子，提高可复现性
-#   3. MNIST 标准均值方差归一化
-#   4. 训练集数据增强：随机旋转、平移、缩放
-#   5. 使用训练集 / 验证集 / 测试集三部分，更规范
-#   6. 三段式 CNN：Conv + BN + ReLU + Pool + Dropout
-#   7. Kaiming 初始化
-#   8. AdamW + CosineAnnealingLR
-#   9. CrossEntropyLoss + Label Smoothing
-#  10. CUDA 下自动使用 AMP 混合精度训练
-#  11. 梯度裁剪，提升训练稳定性
-#  12. 根据验证集准确率自动保存最佳模型
-#  13. 支持加载最佳模型并在测试集上最终评估
+# 相比原版的小改动：
+#   1. 增加 NUM_CLASSES / EARLY_STOPPING_PATIENCE / RESUME_FROM_CKPT 配置
+#   2. DataLoader 加入 generator 和 worker_init_fn，增强可复现性
+#   3. 训练支持早停，验证集长期不提升时自动停止
+#   4. checkpoint 加载兼容新版 PyTorch 的 weights_only 参数
+#   5. 单张图片推理返回类别与置信度
+#   6. main 中加入异常提示，便于定位运行问题
 # =============================================================================
 
 import os
@@ -43,6 +36,9 @@ class Config:
     SAVE_DIR = "./checkpoints"
     CKPT_NAME = "best_cnn_mnist.pth"
 
+    # 数据与模型配置
+    NUM_CLASSES = 10
+
     # 训练超参数
     EPOCHS = 15
     BATCH_SIZE = 128
@@ -55,6 +51,12 @@ class Config:
 
     # 验证集比例
     VAL_RATIO = 0.1
+
+    # 早停配置：None 表示关闭早停
+    EARLY_STOPPING_PATIENCE = 5
+
+    # 是否从已有 checkpoint 继续训练
+    RESUME_FROM_CKPT = False
 
     # DataLoader 配置
     # Windows + PyCharm 下 NUM_WORKERS=0 最稳定
@@ -108,6 +110,16 @@ def set_seed(seed: int = 42) -> None:
         # 更强调可复现性
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
+
+        # 对 Ampere 及更新架构通常能加速矩阵计算；对结果有极小数值影响
+        torch.backends.cuda.matmul.allow_tf32 = True
+
+
+def seed_worker(worker_id: int) -> None:
+    """为 DataLoader worker 固定随机种子。"""
+    worker_seed = cfg.SEED + worker_id
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
 
 
 def ensure_dir(path: str) -> None:
@@ -182,7 +194,6 @@ def build_dataloaders() -> Tuple[DataLoader, DataLoader, DataLoader]:
 
     train_transform, eval_transform = build_transforms()
 
-    # 用于训练的数据集，带数据增强
     full_train_aug = torchvision.datasets.MNIST(
         root=cfg.DATA_DIR,
         train=True,
@@ -190,7 +201,6 @@ def build_dataloaders() -> Tuple[DataLoader, DataLoader, DataLoader]:
         download=True,
     )
 
-    # 用于验证的数据集，不带数据增强
     full_train_eval = torchvision.datasets.MNIST(
         root=cfg.DATA_DIR,
         train=True,
@@ -229,6 +239,8 @@ def build_dataloaders() -> Tuple[DataLoader, DataLoader, DataLoader]:
         pin_memory=pin_memory,
         drop_last=False,
         persistent_workers=persistent_workers,
+        worker_init_fn=seed_worker if cfg.NUM_WORKERS > 0 else None,
+        generator=generator,
     )
 
     val_loader = DataLoader(
@@ -239,6 +251,7 @@ def build_dataloaders() -> Tuple[DataLoader, DataLoader, DataLoader]:
         pin_memory=pin_memory,
         drop_last=False,
         persistent_workers=persistent_workers,
+        worker_init_fn=seed_worker if cfg.NUM_WORKERS > 0 else None,
     )
 
     test_loader = DataLoader(
@@ -249,6 +262,7 @@ def build_dataloaders() -> Tuple[DataLoader, DataLoader, DataLoader]:
         pin_memory=pin_memory,
         drop_last=False,
         persistent_workers=persistent_workers,
+        worker_init_fn=seed_worker if cfg.NUM_WORKERS > 0 else None,
     )
 
     print(f"训练集样本数: {train_size}")
@@ -422,6 +436,7 @@ def train_one_epoch(
                 logits = model(images)
                 loss = loss_fn(logits, labels)
 
+            assert scaler is not None
             scaler.scale(loss).backward()
 
             if cfg.GRAD_CLIP_NORM is not None:
@@ -491,6 +506,7 @@ def save_checkpoint(
         "optimizer_state_dict": optimizer.state_dict(),
         "scheduler_state_dict": scheduler.state_dict(),
         "config": {
+            "num_classes": cfg.NUM_CLASSES,
             "epochs": cfg.EPOCHS,
             "batch_size": cfg.BATCH_SIZE,
             "test_batch_size": cfg.TEST_BATCH_SIZE,
@@ -511,11 +527,24 @@ def load_checkpoint(
     model: nn.Module,
     path: str,
     map_location: torch.device,
+    optimizer: Optional[torch.optim.Optimizer] = None,
+    scheduler: Optional[Any] = None,
 ) -> Dict[str, Any]:
-    """加载模型检查点。"""
+    """加载模型检查点，可选恢复 optimizer 和 scheduler。"""
 
-    checkpoint = torch.load(path, map_location=map_location)
+    try:
+        checkpoint = torch.load(path, map_location=map_location, weights_only=False)
+    except TypeError:
+        checkpoint = torch.load(path, map_location=map_location)
+
     model.load_state_dict(checkpoint["model_state_dict"])
+
+    if optimizer is not None and "optimizer_state_dict" in checkpoint:
+        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+
+    if scheduler is not None and "scheduler_state_dict" in checkpoint:
+        scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+
     return checkpoint
 
 
@@ -544,6 +573,22 @@ def train(
     scaler = create_grad_scaler(DEVICE)
     ckpt_path = get_checkpoint_path()
 
+    start_epoch = 1
+    best_val_acc = 0.0
+
+    if cfg.RESUME_FROM_CKPT and os.path.exists(ckpt_path):
+        checkpoint = load_checkpoint(
+            model=model,
+            path=ckpt_path,
+            map_location=DEVICE,
+            optimizer=optimizer,
+            scheduler=scheduler,
+        )
+        start_epoch = checkpoint.get("epoch", 0) + 1
+        best_val_acc = checkpoint.get("val_acc", 0.0)
+        print(f"已从 checkpoint 继续训练: {ckpt_path}")
+        print(f"起始 Epoch: {start_epoch}, 当前最佳验证准确率: {best_val_acc * 100:.2f}%")
+
     print("=" * 80)
     print("训练配置")
     print("=" * 80)
@@ -557,13 +602,14 @@ def train(
     print(f"Dropout           : {cfg.DROPOUT}")
     print(f"Label Smoothing   : {cfg.LABEL_SMOOTHING}")
     print(f"Grad Clip Norm    : {cfg.GRAD_CLIP_NORM}")
+    print(f"Early Stopping    : {cfg.EARLY_STOPPING_PATIENCE}")
     print(f"AMP               : {DEVICE.type == 'cuda'}")
     print(f"Checkpoint Path   : {ckpt_path}")
     print("=" * 80)
 
-    best_val_acc = 0.0
+    no_improve_epochs = 0
 
-    for epoch in range(1, cfg.EPOCHS + 1):
+    for epoch in range(start_epoch, cfg.EPOCHS + 1):
         start_time = time.time()
 
         train_loss, train_acc = train_one_epoch(
@@ -596,6 +642,7 @@ def train(
 
         if val_acc > best_val_acc:
             best_val_acc = val_acc
+            no_improve_epochs = 0
 
             save_checkpoint(
                 model=model,
@@ -608,8 +655,18 @@ def train(
 
             print(f"发现新的最佳模型，验证集准确率: {best_val_acc * 100:.2f}%")
             print(f"模型已保存到: {ckpt_path}")
+        else:
+            no_improve_epochs += 1
+            print(f"验证集准确率未提升，连续未提升轮数: {no_improve_epochs}")
 
         print("-" * 80)
+
+        if (
+            cfg.EARLY_STOPPING_PATIENCE is not None
+            and no_improve_epochs >= cfg.EARLY_STOPPING_PATIENCE
+        ):
+            print(f"触发早停：验证集连续 {cfg.EARLY_STOPPING_PATIENCE} 轮未提升。")
+            break
 
     print("=" * 80)
     print(f"训练完成，最佳验证集准确率: {best_val_acc * 100:.2f}%")
@@ -625,7 +682,7 @@ def train(
 def predict_single_image(
     model: nn.Module,
     image: torch.Tensor,
-) -> int:
+) -> Tuple[int, float]:
     """
     对单张 MNIST 图片进行预测。
 
@@ -634,7 +691,8 @@ def predict_single_image(
         image: shape 为 [1, 28, 28] 或 [1, 1, 28, 28] 的 Tensor
 
     返回:
-        预测类别，范围 0-9
+        pred: 预测类别，范围 0-9
+        confidence: 预测置信度，范围 0-1
     """
 
     model.eval()
@@ -649,9 +707,10 @@ def predict_single_image(
 
     image = image.to(DEVICE, non_blocking=True)
     logits = model(image)
-    pred = logits.argmax(dim=1).item()
+    probs = torch.softmax(logits, dim=1)
+    confidence, pred = probs.max(dim=1)
 
-    return pred
+    return pred.item(), confidence.item()
 
 
 # =============================================================================
@@ -663,7 +722,7 @@ def main() -> None:
     train_loader, val_loader, test_loader = build_dataloaders()
 
     model = CNN(
-        num_classes=10,
+        num_classes=cfg.NUM_CLASSES,
         dropout=cfg.DROPOUT,
     ).to(DEVICE)
 
@@ -716,4 +775,10 @@ def main() -> None:
 
 if __name__ == "__main__":
     # Windows 下使用 DataLoader 多进程时，必须放在 main 入口中执行
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n训练已被用户手动中断。")
+    except Exception as exc:
+        print(f"\n程序运行出错: {exc}")
+        raise
