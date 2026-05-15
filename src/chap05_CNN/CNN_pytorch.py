@@ -1,15 +1,19 @@
 #!/usr/bin/env python
 # coding: utf-8
 # =============================================================================
-# 基于 PyTorch 的 CNN 实现 —— MNIST 手写数字识别（轻量优化版）
+# 基于 PyTorch 的 CNN 实现 —— MNIST 手写数字识别（完整优化版）
 #
-# 相比原版的小改动：
-#   1. 增加 NUM_CLASSES / EARLY_STOPPING_PATIENCE / RESUME_FROM_CKPT 配置
-#   2. DataLoader 加入 generator 和 worker_init_fn，增强可复现性
-#   3. 训练支持早停，验证集长期不提升时自动停止
-#   4. checkpoint 加载兼容新版 PyTorch 的 weights_only 参数
-#   5. 单张图片推理返回类别与置信度
-#   6. main 中加入异常提示，便于定位运行问题
+# 主要改进：
+#   1. 自动选择训练设备：CUDA / Apple MPS / CPU
+#   2. 使用 MNIST 标准均值和标准差进行归一化
+#   3. 训练集加入轻量数据增强
+#   4. 使用 Conv-BN-ReLU 三阶段 CNN 结构
+#   5. 使用 Dropout / Dropout2d 降低过拟合风险
+#   6. 使用 AdamW 优化器和 CosineAnnealingLR 学习率调度
+#   7. 训练损失支持 Label Smoothing
+#   8. 支持验证集划分、早停和最佳模型保存
+#   9. 支持从 checkpoint 恢复训练
+#  10. 支持单张 MNIST 图片推理并返回置信度
 # =============================================================================
 
 import os
@@ -59,8 +63,7 @@ class Config:
     RESUME_FROM_CKPT = False
 
     # DataLoader 配置
-    # Windows + PyCharm 下 NUM_WORKERS=0 最稳定
-    # 如果运行稳定，可以改成 2 或 4
+    # Windows 下 NUM_WORKERS=0 最稳定；Linux/macOS 可改为 2 或 4
     NUM_WORKERS = 0
 
     # 随机种子
@@ -72,7 +75,7 @@ class Config:
     # 是否在训练结束后加载最佳模型并重新测试
     TEST_BEST_AFTER_TRAIN = True
 
-    # MNIST 官方统计均值和标准差
+    # MNIST 官方训练集统计均值和标准差
     MNIST_MEAN = (0.1307,)
     MNIST_STD = (0.3081,)
 
@@ -98,7 +101,7 @@ DEVICE = get_device()
 
 
 def set_seed(seed: int = 42) -> None:
-    """固定随机种子，尽可能保证实验可复现。"""
+    """固定随机种子，尽可能提高实验可复现性。"""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -107,12 +110,13 @@ def set_seed(seed: int = 42) -> None:
         torch.cuda.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
 
-        # 更强调可复现性
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
-        # 对 Ampere 及更新架构通常能加速矩阵计算；对结果有极小数值影响
-        torch.backends.cuda.matmul.allow_tf32 = True
+        # 为了更稳定的复现，关闭 TF32。
+        # 如果只追求速度，可以改为 True。
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
 
 
 def seed_worker(worker_id: int) -> None:
@@ -134,7 +138,7 @@ def get_checkpoint_path() -> str:
 
 
 def create_grad_scaler(device: torch.device) -> Optional[Any]:
-    """创建 AMP GradScaler，兼容新版和旧版 PyTorch。"""
+    """创建 AMP GradScaler，仅在 CUDA 上启用。"""
     if device.type != "cuda":
         return None
 
@@ -148,7 +152,7 @@ def create_grad_scaler(device: torch.device) -> Optional[Any]:
 
 
 def autocast_context(device: torch.device):
-    """创建 AMP autocast 上下文，兼容新版和旧版 PyTorch。"""
+    """创建 AMP autocast 上下文，仅在 CUDA 上启用。"""
     if device.type != "cuda":
         return nullcontext()
 
@@ -162,7 +166,7 @@ def autocast_context(device: torch.device):
 # 数据加载
 # =============================================================================
 def build_transforms() -> Tuple[transforms.Compose, transforms.Compose]:
-    """构建训练集和测试集的数据预处理流程。"""
+    """构建训练集和验证/测试集的数据预处理流程。"""
 
     train_transform = transforms.Compose([
         transforms.RandomAffine(
@@ -219,14 +223,16 @@ def build_dataloaders() -> Tuple[DataLoader, DataLoader, DataLoader]:
     val_size = int(total_size * cfg.VAL_RATIO)
     train_size = total_size - val_size
 
-    generator = torch.Generator().manual_seed(cfg.SEED)
-    indices = torch.randperm(total_size, generator=generator).tolist()
+    split_generator = torch.Generator().manual_seed(cfg.SEED)
+    indices = torch.randperm(total_size, generator=split_generator).tolist()
 
     val_indices = indices[:val_size]
     train_indices = indices[val_size:]
 
     train_set = Subset(full_train_aug, train_indices)
     val_set = Subset(full_train_eval, val_indices)
+
+    loader_generator = torch.Generator().manual_seed(cfg.SEED)
 
     pin_memory = DEVICE.type == "cuda"
     persistent_workers = cfg.NUM_WORKERS > 0
@@ -240,7 +246,7 @@ def build_dataloaders() -> Tuple[DataLoader, DataLoader, DataLoader]:
         drop_last=False,
         persistent_workers=persistent_workers,
         worker_init_fn=seed_worker if cfg.NUM_WORKERS > 0 else None,
-        generator=generator,
+        generator=loader_generator,
     )
 
     val_loader = DataLoader(
@@ -276,7 +282,7 @@ def build_dataloaders() -> Tuple[DataLoader, DataLoader, DataLoader]:
 # 模型定义
 # =============================================================================
 class ConvBlock(nn.Module):
-    """Conv2d + BatchNorm2d + ReLU 的基础模块。"""
+    """Conv2d + BatchNorm2d + ReLU 基础模块。"""
 
     def __init__(self, in_channels: int, out_channels: int):
         super().__init__()
@@ -533,9 +539,16 @@ def load_checkpoint(
     """加载模型检查点，可选恢复 optimizer 和 scheduler。"""
 
     try:
-        checkpoint = torch.load(path, map_location=map_location, weights_only=False)
+        checkpoint = torch.load(
+            path,
+            map_location=map_location,
+            weights_only=False,
+        )
     except TypeError:
-        checkpoint = torch.load(path, map_location=map_location)
+        checkpoint = torch.load(
+            path,
+            map_location=map_location,
+        )
 
     model.load_state_dict(checkpoint["model_state_dict"])
 
@@ -566,9 +579,11 @@ def train(
         T_max=cfg.EPOCHS * len(train_loader),
     )
 
-    loss_fn = nn.CrossEntropyLoss(
+    train_loss_fn = nn.CrossEntropyLoss(
         label_smoothing=cfg.LABEL_SMOOTHING,
     )
+
+    eval_loss_fn = nn.CrossEntropyLoss()
 
     scaler = create_grad_scaler(DEVICE)
     ckpt_path = get_checkpoint_path()
@@ -586,8 +601,10 @@ def train(
         )
         start_epoch = checkpoint.get("epoch", 0) + 1
         best_val_acc = checkpoint.get("val_acc", 0.0)
+
         print(f"已从 checkpoint 继续训练: {ckpt_path}")
-        print(f"起始 Epoch: {start_epoch}, 当前最佳验证准确率: {best_val_acc * 100:.2f}%")
+        print(f"起始 Epoch: {start_epoch}")
+        print(f"当前最佳验证准确率: {best_val_acc * 100:.2f}%")
 
     print("=" * 80)
     print("训练配置")
@@ -615,7 +632,7 @@ def train(
         train_loss, train_acc = train_one_epoch(
             model=model,
             train_loader=train_loader,
-            loss_fn=loss_fn,
+            loss_fn=train_loss_fn,
             optimizer=optimizer,
             scheduler=scheduler,
             scaler=scaler,
@@ -625,7 +642,7 @@ def train(
         val_loss, val_acc = evaluate(
             model=model,
             data_loader=val_loader,
-            loss_fn=loss_fn,
+            loss_fn=eval_loss_fn,
         )
 
         elapsed = time.time() - start_time
@@ -688,7 +705,8 @@ def predict_single_image(
 
     参数:
         model: 训练好的模型
-        image: shape 为 [1, 28, 28] 或 [1, 1, 28, 28] 的 Tensor
+        image: shape 为 [1, 28, 28] 或 [1, 1, 28, 28] 的 Tensor。
+               注意：输入应已完成 ToTensor 和 Normalize 预处理。
 
     返回:
         pred: 预测类别，范围 0-9
@@ -706,6 +724,7 @@ def predict_single_image(
         )
 
     image = image.to(DEVICE, non_blocking=True)
+
     logits = model(image)
     probs = torch.softmax(logits, dim=1)
     confidence, pred = probs.max(dim=1)
@@ -753,14 +772,12 @@ def main() -> None:
                 map_location=DEVICE,
             )
 
-            loss_fn = nn.CrossEntropyLoss(
-                label_smoothing=cfg.LABEL_SMOOTHING,
-            )
+            test_loss_fn = nn.CrossEntropyLoss()
 
             final_loss, final_acc = evaluate(
                 model=model,
                 data_loader=test_loader,
-                loss_fn=loss_fn,
+                loss_fn=test_loss_fn,
             )
 
             print("=" * 80)
