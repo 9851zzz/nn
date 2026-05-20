@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>SVM 支持向量机代码改进报告 - 神经网络</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+        <link href="../extra.css" rel="stylesheet" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "SVM \u652f\u6301\u5411\u91cf\u673a\u4ee3\u7801\u6539\u8fdb\u62a5\u544a";
+        var mkdocs_page_input_path = "svm_improved.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href=".." class="icon icon-home"> 神经网络
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">首页</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../carla_yolo_detection/">自动驾驶感知系统</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">神经网络</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">SVM 支持向量机代码改进报告</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/OpenHUTB/nn/edit/master/docs/svm_improved.md" class="icon icon-github"> Edit on GitHub</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="svm">SVM 支持向量机代码改进报告</h1>
+<h2 id="_1">一、概述</h2>
+<p>本次改进针对 <code>src/chap03_SVM/svm.py</code> 中的线性 SVM 实现，修复了一个关键 Bug 并增加了四项训练优化功能。改进保持了原有算法（hinge loss + L2 正则化 + 梯度下降）不变，仅在工程实现层面进行优化。</p>
+<p>核心改进：</p>
+<ol>
+<li><strong>修复 predict() 崩溃 Bug</strong> — 原代码调用 <code>train()</code> 后再调用 <code>predict()</code> 会因 <code>y_train_unique</code> 未定义而报错</li>
+<li><strong>学习率指数衰减</strong> — 训练初期快速下降，后期精细调优</li>
+<li><strong>训练损失监控</strong> — 每隔固定轮数打印 loss、accuracy、lr，便于观察收敛过程</li>
+<li><strong>早停机制</strong> — 损失不再下降时自动停止，节省计算资源</li>
+<li><strong>默认开启正则化</strong> — <code>reg_lambda</code> 从 0.0 改为 0.001，防止过拟合</li>
+</ol>
+<hr />
+<h2 id="_2">二、原代码问题分析</h2>
+<h3 id="21-predict-bug">2.1 predict() 方法存在崩溃 Bug</h3>
+<p><strong>原代码：</strong></p>
+<pre><code class="language-python">def predict(self, x_raw):
+    x = self.scaler.transform(x_raw)
+    score = np.dot(x, self.w) + self.b
+    return np.where(score &gt;= 0, 1, -1) if -1 in self.y_train_unique else np.where(score &gt;= 0, 1, 0)
+
+def train_with_label_tracking(self, data_train):
+    self.y_train_unique = np.unique(data_train[:, 2])  # 只在这里赋值
+    self.train(data_train)
+</code></pre>
+<p><strong>问题：</strong>
+- <code>predict()</code> 依赖 <code>self.y_train_unique</code> 属性
+- 该属性只在 <code>train_with_label_tracking()</code> 中赋值
+- 如果直接调用 <code>train()</code> 后再调用 <code>predict()</code>，会抛出 <code>AttributeError: 'SVM' object has no attribute 'y_train_unique'</code>
+- 需要一个专门的 wrapper 方法来避免这个 Bug，说明封装存在缺陷</p>
+<h3 id="22">2.2 训练过程无反馈</h3>
+<p><strong>原代码：</strong></p>
+<pre><code class="language-python">for epoch in range(self.max_iter):
+    # ... 梯度计算和更新 ...
+    # 无任何输出
+</code></pre>
+<p><strong>问题：</strong>
+- 默认 20000 次迭代，全程无输出
+- 无法判断模型是否收敛、收敛速度如何
+- 调试和调参非常困难</p>
+<h3 id="23">2.3 固定学习率</h3>
+<p><strong>原代码：</strong></p>
+<pre><code class="language-python">self.learning_rate = learning_rate  # 始终不变
+</code></pre>
+<p><strong>问题：</strong>
+- 训练初期需要大学习率快速收敛
+- 训练后期需要小学习率精细调优
+- 固定学习率无法同时满足两者，容易在最优点附近震荡</p>
+<h3 id="24">2.4 无早停机制</h3>
+<p><strong>问题：</strong>
+- 无论是否已收敛，都跑满 <code>max_iter</code> 轮
+- 浪费计算资源
+- 过多的迭代可能导致过拟合</p>
+<h3 id="25">2.5 正则化默认关闭</h3>
+<p><strong>原代码：</strong></p>
+<pre><code class="language-python">def __init__(self, learning_rate=0.1, reg_lambda=0.0, max_iter=20000):
+</code></pre>
+<p><strong>问题：</strong>
+- <code>reg_lambda=0.0</code> 意味着没有正则化
+- SVM 的核心优势之一就是通过正则化控制模型复杂度
+- 默认关闭正则化容易导致过拟合</p>
+<hr />
+<h2 id="_3">三、改进内容详解</h2>
+<h3 id="31-predict-bug">3.1 修复 predict() Bug</h3>
+<p><strong>改进代码：</strong></p>
+<pre><code class="language-python">def train(self, data_train):
+    X_raw = data_train[:, :2]
+    y_raw = data_train[:, 2]
+    # 在 train() 中直接记录标签空间
+    self.label_set = np.unique(y_raw)
+    # ...
+
+def predict(self, x_raw):
+    x = self.scaler.transform(x_raw)
+    score = np.dot(x, self.w) + self.b
+    # 使用 train() 中记录的 self.label_set
+    if -1 in self.label_set:
+        return np.where(score &gt;= 0, 1, -1)
+    else:
+        return np.where(score &gt;= 0, 1, 0)
+</code></pre>
+<p><strong>改进点：</strong>
+- 将标签记录逻辑从 <code>train_with_label_tracking()</code> 移入 <code>train()</code> 本身
+- 删除了多余的 <code>train_with_label_tracking()</code> 方法
+- <code>train()</code> + <code>predict()</code> 可以直接配合使用，无需 wrapper</p>
+<h3 id="32">3.2 学习率指数衰减</h3>
+<p><strong>改进代码：</strong></p>
+<pre><code class="language-python">def __init__(self, ..., lr_decay=0.9995, ...):
+    self.lr_decay = lr_decay
+
+def train(self, data_train):
+    lr = self.learning_rate
+    for epoch in range(self.max_iter):
+        # ... 使用 lr 进行梯度更新 ...
+        # 学习率衰减
+        lr = self.learning_rate * (self.lr_decay ** epoch)
+</code></pre>
+<p><strong>原理：</strong>
+- 学习率按 <code>lr = lr_0 × decay^epoch</code> 指数衰减
+- 默认 <code>decay=0.9995</code>，即每轮衰减 0.05%
+- 20000 轮后学习率衰减至初始值的约 0.004 倍</p>
+<p><strong>效果：</strong>
+- 线性数据集：lr 从 0.1 衰减至 0.000033
+- 非线性数据集：lr 从 0.1 衰减至 0.004977（6000 轮时早停）</p>
+<h3 id="33">3.3 训练损失监控</h3>
+<p><strong>改进代码：</strong></p>
+<pre><code class="language-python">def _compute_hinge_loss(self, X, y):
+    &quot;&quot;&quot;计算 hinge loss + L2 正则化损失&quot;&quot;&quot;
+    score = np.dot(X, self.w) + self.b
+    hinge = np.maximum(0, 1 - y * score)
+    return np.mean(hinge) + self.reg_lambda * np.dot(self.w, self.w)
+
+def train(self, data_train):
+    for epoch in range(self.max_iter):
+        # ... 训练逻辑 ...
+        if (epoch + 1) % self.print_interval == 0 or epoch == 0:
+            loss = self._compute_hinge_loss(X, y)
+            pred = np.where(np.dot(X, self.w) + self.b &gt;= 0, 1, -1)
+            acc = np.mean(pred == y)
+            print(f&quot;  epoch {epoch+1:&gt;6d} | loss: {loss:.4f} | acc: {acc*100:.1f}% | lr: {lr:.6f}&quot;)
+</code></pre>
+<p><strong>效果：</strong>
+- 每 2000 轮打印一次训练状态
+- 显示当前 epoch、hinge loss、训练准确率、学习率
+- 直观观察收敛过程</p>
+<h3 id="34">3.4 早停机制</h3>
+<p><strong>改进代码：</strong></p>
+<pre><code class="language-python">best_loss = float('inf')
+no_improve_count = 0
+
+for epoch in range(self.max_iter):
+    # ... 训练逻辑 ...
+
+    if (epoch + 1) % self.print_interval == 0:
+        loss = self._compute_hinge_loss(X, y)
+        if loss &lt; best_loss - 1e-6:
+            best_loss = loss
+            no_improve_count = 0
+        else:
+            no_improve_count += self.print_interval
+            if no_improve_count &gt;= self.patience:
+                print(f&quot;  早停触发于 epoch {epoch+1}，最佳损失: {best_loss:.4f}&quot;)
+                break
+</code></pre>
+<p><strong>原理：</strong>
+- 每 <code>print_interval</code> 轮检查一次损失
+- 如果损失连续 <code>patience</code> 轮没有显著下降（&lt; 1e-6），则停止训练
+- 默认 <code>patience=2000</code>，即连续 2000 轮无改善则早停</p>
+<p><strong>效果（实测）：</strong></p>
+<table>
+<thead>
+<tr>
+<th>数据集</th>
+<th>原始轮数</th>
+<th>改进后轮数</th>
+<th>节省</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>线性数据</td>
+<td>20000</td>
+<td>16000</td>
+<td>20%</td>
+</tr>
+<tr>
+<td>非线性数据</td>
+<td>20000</td>
+<td>6000</td>
+<td><strong>70%</strong></td>
+</tr>
+</tbody>
+</table>
+<h3 id="35">3.5 默认开启正则化</h3>
+<p><strong>改进代码：</strong></p>
+<pre><code class="language-python">def __init__(self, learning_rate=0.1, reg_lambda=0.001, ...):
+</code></pre>
+<p><strong>效果：</strong>
+- <code>reg_lambda</code> 从 0.0 改为 0.001
+- 提供适度的 L2 正则化，限制权重大小
+- 防止过拟合，提高泛化能力</p>
+<hr />
+<h2 id="_4">四、结果对比</h2>
+<h3 id="_5">线性数据集</h3>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>改进前</th>
+<th>改进后</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>训练准确率</td>
+<td>95.5%</td>
+<td>95.5%</td>
+</tr>
+<tr>
+<td>测试准确率</td>
+<td>97.5%</td>
+<td>97.5%</td>
+</tr>
+<tr>
+<td>训练轮数</td>
+<td>20000</td>
+<td>16000（早停）</td>
+</tr>
+<tr>
+<td>训练过程</td>
+<td>无输出</td>
+<td>每 2000 轮打印 loss/acc/lr</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_6">非线性数据集</h3>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>改进前</th>
+<th>改进后</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>训练准确率</td>
+<td>81.5%</td>
+<td>81.5%</td>
+</tr>
+<tr>
+<td>测试准确率</td>
+<td>81.0%</td>
+<td>81.0%</td>
+</tr>
+<tr>
+<td>训练轮数</td>
+<td>20000</td>
+<td>6000（早停）</td>
+</tr>
+<tr>
+<td>训练过程</td>
+<td>无输出</td>
+<td>每 2000 轮打印 loss/acc/lr</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_7">训练过程日志（线性数据集）</h3>
+<pre><code>  epoch      1 | loss: 0.8834 | acc: 96.0% | lr: 0.100000
+  epoch   2000 | loss: 0.1116 | acc: 95.5% | lr: 0.036797
+  epoch   4000 | loss: 0.1109 | acc: 95.5% | lr: 0.013534
+  epoch   6000 | loss: 0.1107 | acc: 95.5% | lr: 0.004977
+  epoch   8000 | loss: 0.1106 | acc: 95.5% | lr: 0.001831
+  epoch  10000 | loss: 0.1106 | acc: 95.5% | lr: 0.000673
+  epoch  12000 | loss: 0.1106 | acc: 95.5% | lr: 0.000248
+  epoch  14000 | loss: 0.1106 | acc: 95.5% | lr: 0.000091
+  epoch  16000 | loss: 0.1106 | acc: 95.5% | lr: 0.000033
+  早停触发于 epoch 16000，最佳损失: 0.1106
+train accuracy: 95.5%
+test accuracy: 97.5%
+</code></pre>
+<h3 id="_8">训练过程日志（非线性数据集）</h3>
+<pre><code>  epoch      1 | loss: 0.9460 | acc: 81.5% | lr: 0.100000
+  epoch   2000 | loss: 0.3947 | acc: 81.0% | lr: 0.036797
+  epoch   4000 | loss: 0.3947 | acc: 81.5% | lr: 0.013534
+  epoch   6000 | loss: 0.3947 | acc: 81.5% | lr: 0.004977
+  早停触发于 epoch 6000，最佳损失: 0.3947
+train accuracy: 81.5%
+test accuracy: 81.0%
+</code></pre>
+<hr />
+<h2 id="_9">五、新增命令行参数</h2>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--learning-rate</code></td>
+<td>0.1</td>
+<td>初始学习率</td>
+</tr>
+<tr>
+<td><code>--reg-lambda</code></td>
+<td>0.001</td>
+<td>L2 正则化系数（原默认 0.0）</td>
+</tr>
+<tr>
+<td><code>--max-iter</code></td>
+<td>20000</td>
+<td>最大迭代次数</td>
+</tr>
+<tr>
+<td><code>--lr-decay</code></td>
+<td>0.9995</td>
+<td>学习率衰减系数（新增）</td>
+</tr>
+<tr>
+<td><code>--patience</code></td>
+<td>2000</td>
+<td>早停耐心值（新增）</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="_10">六、总结</h2>
+<h3 id="_11">改进总结</h3>
+<p>本次对 <code>svm.py</code> 的改进聚焦于工程实践层面，不改变核心算法：</p>
+<ol>
+<li><strong>修复了 predict() 的属性未定义 Bug</strong> — 消除了对 <code>train_with_label_tracking()</code> 的依赖</li>
+<li><strong>添加学习率指数衰减</strong> — 兼顾初期快速收敛和后期精细调优</li>
+<li><strong>添加训练过程监控</strong> — 实时显示 loss、accuracy、lr，便于调试</li>
+<li><strong>添加早停机制</strong> — 线性数据节省 20% 迭代，非线性数据节省 70%</li>
+<li><strong>默认开启 L2 正则化</strong> — 提高泛化能力</li>
+</ol>
+<h3 id="_12">可继续改进的方向</h3>
+<ul>
+<li><strong>Mini-batch SGD</strong>：用小批量梯度下降替代全批量，加速大数据集训练</li>
+<li><strong>核函数扩展</strong>：引入 RBF 核处理非线性数据</li>
+<li><strong>交叉验证</strong>：自动选择最优超参数组合</li>
+<li><strong>可视化</strong>：绘制决策边界和训练 loss 曲线</li>
+</ul>
+<hr />
+<h2 id="_13">七、使用方式</h2>
+<pre><code class="language-bash">cd src/chap03_SVM
+
+# 使用默认参数运行（线性数据集）
+python svm.py
+
+# 自定义参数运行
+python svm.py --learning-rate 0.05 --reg-lambda 0.01 --lr-decay 0.999 --patience 3000
+
+# 使用非线性数据集
+python svm.py --train-file data/train_kernel.txt --test-file data/test_kernel.txt
+</code></pre>
+              
+            </div>
+          </div><footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+      <p>OpenHUTB 版权所有 &copy; 2026</p>
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/OpenHUTB/nn" class="fa fa-github" style="color: #fcfcfc"> GitHub</a>
+        </span>
+    
+    
+    
+  </span>
+</div>
+    <script src="../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "..";</script>
+    <script src="../js/theme_extra.js"></script>
+    <script src="../js/theme.js"></script>
+      <script src="../extra.js"></script>
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.4/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+      <script src="../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

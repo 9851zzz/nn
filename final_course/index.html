@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>期末课程文档 - 神经网络</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+        <link href="../extra.css" rel="stylesheet" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "\u671f\u672b\u8bfe\u7a0b\u6587\u6863";
+        var mkdocs_page_input_path = "final_course\\README.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href=".." class="icon icon-home"> 神经网络
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">首页</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../carla_yolo_detection/">自动驾驶感知系统</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">神经网络</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">期末课程文档</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/OpenHUTB/nn/edit/master/docs/final_course/README.md" class="icon icon-github"> Edit on GitHub</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="_1">期末课程文档</h1>
+<p><strong>作者：欧阳宇明（9851zzz）</strong>
+<strong>仓库：<a href="https://github.com/OpenHUTB/nn">OpenHUTB/nn</a></strong></p>
+<hr />
+<h2 id="_2">目录</h2>
+<ol>
+<li><a href="#1-cnn-手写数字识别系列">CNN 手写数字识别系列</a></li>
+<li><a href="#2-crowdmarl-多智能体强化学习">CrowdMARL 多智能体强化学习</a></li>
+<li><a href="#3-仓库机器人路径规划">仓库机器人路径规划</a></li>
+<li><a href="#4-无人车烟雾监测系统">无人车烟雾监测系统</a></li>
+<li><a href="#5-车道线检测与风险评估">车道线检测与风险评估</a></li>
+<li><a href="#6-三指夹爪控制仿真">三指夹爪控制仿真</a></li>
+<li><a href="#7-可视化模块重构">可视化模块重构</a></li>
+<li><a href="#8-pr-汇总表">PR 汇总表</a></li>
+</ol>
+<hr />
+<h2 id="1-cnn">1. CNN 手写数字识别系列</h2>
+<p>本系列围绕 MNIST 手写数字识别任务，对卷积神经网络进行了多轮迭代优化，从基础模型修复到训练流程全面升级，最终将测试准确率从 <strong>98.6%</strong> 提升至 <strong>99.72%</strong>。</p>
+<h3 id="11-cnn-pr-5222">1.1 基础 CNN 模型修复（PR #5222）</h3>
+<p>对原始 CNN 实现进行了系统性修复：</p>
+<ul>
+<li>修复过时 API：删除废弃的 <code>Variable</code> 包装，<code>volatile=True</code> 改为 <code>torch.no_grad()</code></li>
+<li>修复 Dropout 参数错误：<code>keep_prob_rate</code> 改为 <code>1 - KEEP_PROB_RATE</code>（p 参数是丢弃率而非保留率）</li>
+<li>规范命名：超参数统一改为大写，<code>out1/out2</code> 改为 <code>fc1/fc2</code></li>
+<li>优化 test 函数：添加 <code>cnn.eval()</code> 和 <code>cnn.train()</code> 切换</li>
+<li>完善中文注释，包含张量形状变化说明</li>
+</ul>
+<p><strong>运行效果：</strong> 准确率从 98.6% 提升至 <strong>99.20%</strong></p>
+<table>
+<thead>
+<tr>
+<th style="text-align: center;">优化前</th>
+<th style="text-align: center;">优化后</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: center;"><img alt="优化前" src="assets/pr5222_before.png" /></td>
+<td style="text-align: center;"><img alt="优化后" src="assets/pr5222_after.png" /></td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>PR 链接：<a href="https://github.com/OpenHUTB/nn/pull/5222">#5222</a></p>
+</blockquote>
+<h3 id="12-cnn-pytorch-pr-5507">1.2 CNN PyTorch 算法改进（PR #5507）</h3>
+<p>在修复基础上进行结构性优化：</p>
+<ul>
+<li>模型结构：由原始实现调整为三层 CNN 结构</li>
+<li>训练策略：优化器更新为 AdamW，加入余弦退火学习率调度</li>
+<li>数据处理：增加随机旋转、平移等增强方式</li>
+<li>实验设置：固定随机种子，保证结果可复现</li>
+<li>初始化方式：优化权重初始化，提升训练效果</li>
+</ul>
+<p><strong>运行效果：</strong> 准确率从 99.2% 提升至 <strong>99.47%</strong></p>
+<table>
+<thead>
+<tr>
+<th style="text-align: center;">优化前</th>
+<th style="text-align: center;">优化后</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: center;"><img alt="优化前" src="assets/pr5507_before.png" /></td>
+<td style="text-align: center;"><img alt="优化后" src="assets/pr5507_after.png" /></td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>PR 链接：<a href="https://github.com/OpenHUTB/nn/pull/5507">#5507</a></p>
+</blockquote>
+<h3 id="13-cnn-pr-5545">1.3 改进 CNN 训练效果（PR #5545）</h3>
+<p>进一步优化训练流程与数据处理：</p>
+<ul>
+<li>设备自动选择：CUDA → Apple MPS → CPU 逐级回退</li>
+<li>训练集加入轻量数据增强（RandomAffine：±10° 旋转 + 10% 平移）</li>
+<li>使用 MNIST 官方均值/标准差 (0.1307 / 0.3081) 进行归一化</li>
+<li>网络升级为三段式 CNN（Conv-BN-ReLU ×2 + MaxPool + Dropout2d），搭配 Kaiming 初始化</li>
+<li>CrossEntropyLoss 加入 label smoothing (0.1)</li>
+<li>测试评估改为遍历完整 10000 张测试集</li>
+<li>自动保存测试集上表现最好的模型权重</li>
+</ul>
+<p><strong>运行效果：</strong> 准确率从 99.47% 提升至 <strong>99.71%</strong></p>
+<table>
+<thead>
+<tr>
+<th style="text-align: center;">优化前</th>
+<th style="text-align: center;">优化后</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: center;"><img alt="优化前" src="assets/pr5545_before.png" /></td>
+<td style="text-align: center;"><img alt="优化后" src="assets/pr5545_after.png" /></td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>PR 链接：<a href="https://github.com/OpenHUTB/nn/pull/5545">#5545</a></p>
+</blockquote>
+<h3 id="14-cnn-pr-5594">1.4 构建并训练 CNN 模型（PR #5594）</h3>
+<p>构建完整的 CNN 训练与评估流程：</p>
+<ul>
+<li>两层卷积层 + 两层全连接层的基础架构</li>
+<li>Adam 优化器 + 交叉熵损失函数</li>
+<li>增强训练过程可视化，每个 epoch 输出训练集和测试集准确率</li>
+<li>MNIST 数据集训练与评估</li>
+</ul>
+<p><strong>运行效果：</strong> 准确率从 99.47% 提升至 <strong>99.70%</strong></p>
+<table>
+<thead>
+<tr>
+<th style="text-align: center;">优化前</th>
+<th style="text-align: center;">优化后</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: center;"><img alt="优化前" src="assets/pr5594_before.png" /></td>
+<td style="text-align: center;"><img alt="优化后" src="assets/pr5594_after.png" /></td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>PR 链接：<a href="https://github.com/OpenHUTB/nn/pull/5594">#5594</a></p>
+</blockquote>
+<h3 id="15-cnn-pr-5707">1.5 CNN 算法优化（PR #5707）</h3>
+<p>对 CNN 进行深度优化：</p>
+<ul>
+<li>三层 CNN 结构 + Dropout2d + Kaiming 初始化</li>
+<li>设备自动适配：CUDA / Apple MPS / CPU 自动切换</li>
+<li>DataLoader 增加 <code>num_workers</code> 和 <code>pin_memory</code></li>
+<li>数据增强：随机仿射变换（旋转与平移）+ MNIST 真实均值/标准差归一化</li>
+<li>AdamW + CosineAnnealingLR + Label Smoothing</li>
+</ul>
+<p><strong>运行效果：</strong> 准确率从 99.70% 提升至 <strong>99.71%</strong></p>
+<table>
+<thead>
+<tr>
+<th style="text-align: center;">优化前</th>
+<th style="text-align: center;">优化后</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: center;"><img alt="优化前" src="assets/pr5707_before.png" /></td>
+<td style="text-align: center;"><img alt="优化后" src="assets/pr5707_after.png" /></td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>PR 链接：<a href="https://github.com/OpenHUTB/nn/pull/5707">#5707</a></p>
+</blockquote>
+<h3 id="16-pr-5892">1.6 优化训练效率与泛化能力（PR #5892）</h3>
+<p>聚焦训练效率与模型泛化：</p>
+<ul>
+<li>新增混合精度训练（<code>torch.cuda.amp</code>），GPU 训练速度提升约 30%，显存占用减半</li>
+<li>DataLoader 新增 <code>persistent_workers=True</code>，子进程跨 epoch 复用</li>
+<li>启用 <code>torch.backends.cudnn.benchmark = True</code></li>
+<li>数据增强新增 <code>RandomErasing(p=0.2)</code>，随机遮挡局部区域</li>
+<li>反向传播新增梯度裁剪 <code>clip_grad_norm_(max_norm=1.0)</code></li>
+</ul>
+<p><strong>运行效果：</strong> 准确率从 99.71% 提升至 <strong>99.72%</strong></p>
+<table>
+<thead>
+<tr>
+<th style="text-align: center;">优化前</th>
+<th style="text-align: center;">优化后</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: center;"><img alt="优化前" src="assets/pr5892_before.png" /></td>
+<td style="text-align: center;"><img alt="优化后" src="assets/pr5892_after.png" /></td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>PR 链接：<a href="https://github.com/OpenHUTB/nn/pull/5892">#5892</a></p>
+</blockquote>
+<h3 id="17-mnist-cnn-pr-5974">1.7 完善 MNIST CNN 训练流程（PR #5974）</h3>
+<p>全面升级训练流程，引入多项先进技术：</p>
+<ul>
+<li><strong>AMP API 升级</strong>：<code>torch.cuda.amp</code> → <code>torch.amp</code>，向下兼容封装</li>
+<li><strong>EMA（参数指数滑动平均）</strong>：每步更新 EMA 副本，评估时取较好者，稳定提升 +0.05~0.15%</li>
+<li><strong>torch.compile</strong>：PyTorch 2.0+ 上获得 20-30% 训练加速，失败自动回退</li>
+<li><strong>LR 调度</strong>：新增 1 epoch 线性 warmup</li>
+<li><strong>evaluate() 修复</strong>：保存并恢复模型原状态</li>
+<li><strong>channels_last 内存布局</strong>：CUDA 上启用 NHWC，配合 AMP 卷积更快</li>
+<li><strong>Checkpoint 增强</strong>：同时保存 raw + EMA 两套权重</li>
+</ul>
+<p><img alt="训练流程" src="assets/pr5974.png" /></p>
+<blockquote>
+<p>PR 链接：<a href="https://github.com/OpenHUTB/nn/pull/5974">#5974</a></p>
+</blockquote>
+<h3 id="18-cnn-pr-6434">1.8 CNN 优化 — 训练集/验证集/测试集划分（PR #6434）</h3>
+<p>规范模型选择流程：</p>
+<ul>
+<li>增加训练集、验证集、测试集划分，使模型选择过程更加规范</li>
+<li>增加验证集评估逻辑，根据验证集准确率保存最佳模型</li>
+<li>优化 AMP 混合精度训练逻辑，兼容新版和旧版 PyTorch</li>
+<li>完善 checkpoint 保存内容，增加 scheduler 状态和训练配置信息</li>
+<li>增加单张图片推理函数的输入维度检查</li>
+<li>调整 DataLoader 配置，使其在 Windows + PyCharm 环境下运行更加稳定</li>
+</ul>
+<p><img alt="CNN优化" src="assets/pr6434.png" /></p>
+<blockquote>
+<p>PR 链接：<a href="https://github.com/OpenHUTB/nn/pull/6434">#6434</a></p>
+</blockquote>
+<hr />
+<h2 id="2-crowdmarl">2. CrowdMARL 多智能体强化学习</h2>
+<p>CrowdMARL 是一个基于 PPO 的多智能体人群仿真项目，支持多种环境场景的训练与测试。</p>
+<h3 id="21-readme-pr-6662">2.1 工具函数与 README 文档（PR #6662）</h3>
+<p>完善项目基础设施：</p>
+<ul>
+<li>新增 <code>utils.py</code> 工具函数：<code>normalize</code> 向量归一化、<code>rotationMatrix2D</code> 二维旋转矩阵、<code>clip</code> 数值裁剪</li>
+<li>使用 numpy 实现向量运算，增强数值稳定性，避免除零错误</li>
+<li>完善 README 文档：项目说明、PPO crowd simulation 描述、训练与测试命令、环境配置与依赖说明</li>
+</ul>
+<p><img alt="CrowdMARL utils" src="assets/pr6662.png" /></p>
+<blockquote>
+<p>PR 链接：<a href="https://github.com/OpenHUTB/nn/pull/6662">#6662</a></p>
+</blockquote>
+<h3 id="22-pr-6666">2.2 环境配置文件（PR #6666）</h3>
+<p>新增 CrowdMARL 环境配置，支持多种仿真场景：</p>
+<ul>
+<li><code>basic.xml</code> — 基础环境</li>
+<li><code>circle1.xml</code> / <code>circle2.xml</code> — 环形运动环境</li>
+<li><code>crossing1.xml</code> / <code>crossing2.xml</code> — 交叉路口环境</li>
+<li><code>obstacles.xml</code> — 障碍物避让环境</li>
+<li>完善 Python package 结构（<code>__init__.py</code>）</li>
+<li>添加 <code>requirements.txt</code> 依赖配置</li>
+</ul>
+<p><img alt="CrowdMARL 环境" src="assets/pr6666.png" /></p>
+<blockquote>
+<p>PR 链接：<a href="https://github.com/OpenHUTB/nn/pull/6666">#6666</a></p>
+</blockquote>
+<hr />
+<h2 id="3-pr-6670">3. 仓库机器人路径规划（PR #6670）</h2>
+<p>优化仓库机器人的 A* 路径规划与贪心任务分配算法：</p>
+<ul>
+<li><strong>A* 路径规划优化</strong>：避免重复入队，提高搜索效率；重构 <code>reconstruct</code> 函数，简化路径重建逻辑</li>
+<li><strong>RouteSegment 和 RobotPlan 改进</strong>：使用 <code>itertools.chain</code> 拼接路径，提高可读性</li>
+<li><strong>greedy_assign_tasks 优化</strong>：提取 <code>compute_task_score</code> 函数，统一评分逻辑；内层循环简化</li>
+<li><strong>增强可维护性</strong>：完整类型提示 (List, Dict, Tuple)，增加注释和文档说明</li>
+</ul>
+<p><img alt="路径规划" src="assets/pr6670.png" /></p>
+<blockquote>
+<p>PR 链接：<a href="https://github.com/OpenHUTB/nn/pull/6670">#6670</a></p>
+</blockquote>
+<hr />
+<h2 id="4-pr-6672">4. 无人车烟雾监测系统（PR #6672）</h2>
+<p>优化无人车烟雾监测系统的数据生成、异常检测与报警等级分类：</p>
+<ul>
+<li><strong>烟雾传感器数据生成</strong>：模拟无人车烟雾浓度采样，增加随机低风险、高风险段及异常值</li>
+<li><strong>数据预处理</strong>：构建时序特征（当前浓度、前一帧浓度、浓度变化率），支持标准化和训练/测试集划分</li>
+<li><strong>烟雾异常检测</strong>：基于孤立森林检测异常点（触发报警），输出异常标记数组</li>
+<li><strong>报警等级分类模型</strong>：使用随机森林训练烟雾报警等级（0=无报警，1=低风险，2=高风险）</li>
+</ul>
+<p><strong>运行效果：</strong> 优化前准确率 97.22%，优化后准确率得到显著提升</p>
+<p><img alt="优化后效果" src="assets/pr6672_after.png" /></p>
+<blockquote>
+<p>PR 链接：<a href="https://github.com/OpenHUTB/nn/pull/6672">#6672</a></p>
+</blockquote>
+<hr />
+<h2 id="5-pr-6673">5. 车道线检测与风险评估（PR #6673）</h2>
+<p>移除废弃的 <code>legacy_main()</code> 旧版入口函数，新增演示截图生成脚本：</p>
+<ul>
+<li>移除 <code>main.py</code> 中的 <code>legacy_main()</code> 旧版入口函数（约145行），功能已被 <code>run_pipeline</code> 等模块化接口完全替代</li>
+<li>新增 <code>demo_output.py</code> 演示截图生成脚本，无需实际视频输入即可模拟生成三张典型场景截图</li>
+<li>用于快速展示车道线检测 + 风险评估系统的可视化效果</li>
+</ul>
+<p><strong>三种典型场景：</strong></p>
+<table>
+<thead>
+<tr>
+<th style="text-align: center;">正常行驶</th>
+<th style="text-align: center;">预警状态</th>
+<th style="text-align: center;">危险状态</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: center;"><img alt="正常" src="assets/pr6673_normal.png" /></td>
+<td style="text-align: center;"><img alt="预警" src="assets/pr6673_warning.png" /></td>
+<td style="text-align: center;"><img alt="危险" src="assets/pr6673_danger.png" /></td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>PR 链接：<a href="https://github.com/OpenHUTB/nn/pull/6673">#6673</a></p>
+</blockquote>
+<hr />
+<h2 id="6-pr-6674">6. 三指夹爪控制仿真（PR #6674）</h2>
+<p>优化三指夹爪控制演示脚本，增强代码可读性、可维护性和扩展性：</p>
+<ul>
+<li><strong>关节控制优化</strong>：封装获取关节 qpos 地址逻辑，使用循环批量控制三指基础关节和弯曲关节</li>
+<li><strong>动作模式优化</strong>：封装 <code>compute_mode_actions</code> 函数，统一三种模式动作计算</li>
+<li>三指同步开合</li>
+<li>手指顺序动作</li>
+<li>波浪式动作</li>
+<li><strong>可维护性提升</strong>：使用数组管理关节名称，增加注释和常量 <code>dt</code></li>
+<li><strong>仿真控制优化</strong>：保留原有仿真时间步控制和 viewer 同步逻辑，Ctrl+C 可安全退出</li>
+</ul>
+<p><img alt="三指夹爪控制" src="assets/pr6674.png" /></p>
+<blockquote>
+<p>PR 链接：<a href="https://github.com/OpenHUTB/nn/pull/6674">#6674</a></p>
+</blockquote>
+<hr />
+<h2 id="7-pr-6675">7. 可视化模块重构（PR #6675）</h2>
+<p>重构 <code>visualizer.py</code> 可视化模块，提升渲染性能和代码可维护性：</p>
+<ul>
+<li>引入字体缓存机制（<code>_font_cache</code> + <code>_get_font</code>），避免每次绘制重复加载字体文件</li>
+<li>新增 <code>_batch_put_chinese_text</code> 方法，将多次 PIL↔OpenCV 图像转换合并为单次转换</li>
+<li>移除已禁用的 <code>_draw_direction_indicator</code> 空方法</li>
+<li>用循环重构重复的车道线绘制逻辑，消除冗余代码</li>
+<li>优化 <code>_draw_dashed_line</code>，用步长为 2 的 range 替代逐次判断奇偶</li>
+<li>新增 <code>test_visualizer.py</code> 测试脚本</li>
+</ul>
+<p><img alt="可视化模块" src="assets/pr6675.png" /></p>
+<blockquote>
+<p>PR 链接：<a href="https://github.com/OpenHUTB/nn/pull/6675">#6675</a></p>
+</blockquote>
+<hr />
+<h2 id="8-pr">8. PR 汇总表</h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>PR 编号</th>
+<th>标题</th>
+<th>合并日期</th>
+<th>主要内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><a href="https://github.com/OpenHUTB/nn/pull/5222">#5222</a></td>
+<td>My contribution</td>
+<td>2026-04-05</td>
+<td>CNN 基础修复，98.6% → 99.20%</td>
+</tr>
+<tr>
+<td>2</td>
+<td><a href="https://github.com/OpenHUTB/nn/pull/5507">#5507</a></td>
+<td>CNN_pytorch 算法改进</td>
+<td>2026-04-20</td>
+<td>三层CNN + AdamW，99.2% → 99.47%</td>
+</tr>
+<tr>
+<td>3</td>
+<td><a href="https://github.com/OpenHUTB/nn/pull/5545">#5545</a></td>
+<td>改进 CNN 训练效果</td>
+<td>2026-04-21</td>
+<td>设备自动选择 + Label Smoothing，99.47% → 99.71%</td>
+</tr>
+<tr>
+<td>4</td>
+<td><a href="https://github.com/OpenHUTB/nn/pull/5594">#5594</a></td>
+<td>构建并训练 CNN 模型</td>
+<td>2026-04-22</td>
+<td>完整训练评估流程，99.47% → 99.70%</td>
+</tr>
+<tr>
+<td>5</td>
+<td><a href="https://github.com/OpenHUTB/nn/pull/5707">#5707</a></td>
+<td>CNN 算法优化</td>
+<td>2026-04-25</td>
+<td>深度优化，99.70% → 99.71%</td>
+</tr>
+<tr>
+<td>6</td>
+<td><a href="https://github.com/OpenHUTB/nn/pull/5892">#5892</a></td>
+<td>优化训练效率与泛化</td>
+<td>2026-04-29</td>
+<td>混合精度 + RandomErasing，99.71% → 99.72%</td>
+</tr>
+<tr>
+<td>7</td>
+<td><a href="https://github.com/OpenHUTB/nn/pull/5974">#5974</a></td>
+<td>完善 MNIST CNN 训练流程</td>
+<td>2026-05-02</td>
+<td>AMP + EMA + torch.compile</td>
+</tr>
+<tr>
+<td>8</td>
+<td><a href="https://github.com/OpenHUTB/nn/pull/6434">#6434</a></td>
+<td>Cnn optimization</td>
+<td>2026-05-12</td>
+<td>训练集/验证集/测试集划分</td>
+</tr>
+<tr>
+<td>9</td>
+<td><a href="https://github.com/OpenHUTB/nn/pull/6662">#6662</a></td>
+<td>CrowdMARL utils</td>
+<td>2026-05-20</td>
+<td>工具函数与 README 文档</td>
+</tr>
+<tr>
+<td>10</td>
+<td><a href="https://github.com/OpenHUTB/nn/pull/6666">#6666</a></td>
+<td>CrowdMARL 环境</td>
+<td>2026-05-20</td>
+<td>多场景环境配置文件</td>
+</tr>
+<tr>
+<td>11</td>
+<td><a href="https://github.com/OpenHUTB/nn/pull/6670">#6670</a></td>
+<td>仓库机器人路径规划</td>
+<td>2026-05-20</td>
+<td>A* 路径规划 + 贪心任务分配</td>
+</tr>
+<tr>
+<td>12</td>
+<td><a href="https://github.com/OpenHUTB/nn/pull/6672">#6672</a></td>
+<td>无人车烟雾监测</td>
+<td>2026-05-20</td>
+<td>孤立森林 + 随机森林报警分类</td>
+</tr>
+<tr>
+<td>13</td>
+<td><a href="https://github.com/OpenHUTB/nn/pull/6673">#6673</a></td>
+<td>车道线检测 demo</td>
+<td>2026-05-20</td>
+<td>移除旧代码 + 演示截图脚本</td>
+</tr>
+<tr>
+<td>14</td>
+<td><a href="https://github.com/OpenHUTB/nn/pull/6674">#6674</a></td>
+<td>三指夹爪控制</td>
+<td>2026-05-20</td>
+<td>统一手指控制与模式计算</td>
+</tr>
+<tr>
+<td>15</td>
+<td><a href="https://github.com/OpenHUTB/nn/pull/6675">#6675</a></td>
+<td>可视化模块重构</td>
+<td>2026-05-20</td>
+<td>字体缓存 + 批量渲染优化</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="_3">技术栈</h2>
+<ul>
+<li><strong>语言</strong>：Python 3.9+</li>
+<li><strong>深度学习</strong>：PyTorch 2.x（AMP、torch.compile、EMA）</li>
+<li><strong>仿真环境</strong>：MuJoCo、CARLA、AirSim</li>
+<li><strong>机器学习</strong>：scikit-learn（孤立森林、随机森林）</li>
+<li><strong>计算机视觉</strong>：OpenCV、PIL/Pillow</li>
+<li><strong>强化学习</strong>：PPO（CrowdMARL）</li>
+<li><strong>操作系统</strong>：Windows 11 / Ubuntu 22.04</li>
+</ul>
+              
+            </div>
+          </div><footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+      <p>OpenHUTB 版权所有 &copy; 2026</p>
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/OpenHUTB/nn" class="fa fa-github" style="color: #fcfcfc"> GitHub</a>
+        </span>
+    
+    
+    
+  </span>
+</div>
+    <script src="../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "..";</script>
+    <script src="../js/theme_extra.js"></script>
+    <script src="../js/theme.js"></script>
+      <script src="../extra.js"></script>
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.4/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+      <script src="../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>线性回归模型偏置更新修复 - 神经网络</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+        <link href="../extra.css" rel="stylesheet" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "\u7ebf\u6027\u56de\u5f52\u6a21\u578b\u504f\u7f6e\u66f4\u65b0\u4fee\u590d";
+        var mkdocs_page_input_path = "linear_regression_fix.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href=".." class="icon icon-home"> 神经网络
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">首页</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../carla_yolo_detection/">自动驾驶感知系统</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">神经网络</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">线性回归模型偏置更新修复</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/OpenHUTB/nn/edit/master/docs/linear_regression_fix.md" class="icon icon-github"> Edit on GitHub</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="_1">线性回归模型偏置更新修复</h1>
+<h2 id="_2">线性回归基本原理</h2>
+<p>线性回归是最基础的机器学习算法之一，用于建立自变量x与因变量y之间的线性关系。</p>
+<h3 id="_3">数学表达式</h3>
+<p>标准的线性回归模型表达式为：</p>
+<pre><code class="language-text">y = w·x + b
+</code></pre>
+<p>其中：</p>
+<ul>
+<li><code>y</code>：预测值（因变量）</li>
+<li><code>x</code>：输入特征（自变量）</li>
+<li><code>w</code>：权重参数（斜率）</li>
+<li><code>b</code>：偏置参数（截距）</li>
+</ul>
+<h3 id="_4">偏置项的几何意义</h3>
+<p>偏置项<code>b</code>在几何上表示直线在y轴上的截距：</p>
+<ul>
+<li>当<code>b = 0</code>时，直线必须通过原点(0, 0)</li>
+<li>当<code>b ≠ 0</code>时，直线可以在y轴上任意位置</li>
+</ul>
+<h3 id="_5">偏置项的数学意义</h3>
+<p>在梯度下降优化中，偏置项的梯度计算为：</p>
+<pre><code class="language-text">∂L/∂b = ∂L/∂y · ∂y/∂b = ∂L/∂y · 1
+</code></pre>
+<p>这意味着偏置项的梯度等于损失函数对预测值的梯度，是优化过程中不可或缺的一部分。</p>
+<hr />
+<h2 id="_6">问题描述</h2>
+<p>在 <code>src/chap02_linear_regression/linear_regression-tf2.0.py</code> 文件中，存在两个bug：</p>
+<h3 id="bug-1">Bug 1：偏置项未被更新</h3>
+<p>在 <code>train_one_step</code> 函数中，只计算了权重 <code>model.w</code> 的梯度并更新，但完全没有计算和更新偏置 <code>model.b</code>。</p>
+<p><strong>问题代码：</strong></p>
+<pre><code class="language-python">@tf.function
+def train_one_step(model, xs, ys):
+    with tf.GradientTape() as tape:
+        y_preds = model(xs)
+        loss = tf.keras.losses.MSE(ys, y_preds)
+    grads = tape.gradient(loss, model.w)    # 只对 w 求梯度
+    optimizer.apply_gradients([(grads, model.w)])    # 只更新 w
+    return loss
+</code></pre>
+<p><strong>问题分析：</strong></p>
+<ol>
+<li><code>tape.gradient(loss, model.w)</code> 只计算损失对权重<code>w</code>的梯度</li>
+<li><code>optimizer.apply_gradients([(grads, model.w)])</code> 只更新权重<code>w</code></li>
+<li>偏置<code>model.b</code>在整个训练过程中始终保持初始值0</li>
+</ol>
+<p><strong>修复后：</strong></p>
+<pre><code class="language-python">@tf.function
+def train_one_step(model, xs, ys):
+    with tf.GradientTape() as tape:
+        y_preds = model(xs)
+        loss = tf.keras.losses.MSE(ys, y_preds)
+    grads = tape.gradient(loss, [model.w, model.b])    # 对 w 和 b 求梯度
+    optimizer.apply_gradients(zip(grads, [model.w, model.b]))    # 更新 w 和 b
+    return loss
+</code></pre>
+<p><strong>修复说明：</strong></p>
+<ol>
+<li><code>tape.gradient(loss, [model.w, model.b])</code> 同时计算损失对<code>w</code>和<code>b</code>的梯度</li>
+<li><code>zip(grads, [model.w, model.b])</code> 将梯度与对应参数配对</li>
+<li><code>optimizer.apply_gradients()</code> 同时更新<code>w</code>和<code>b</code></li>
+</ol>
+<h3 id="bug-2">Bug 2：图例标签不匹配</h3>
+<p>第200行的图例有3个标签 <code>["train", "test", "pred"]</code>，但实际只绘制了2条曲线。</p>
+<p><strong>问题代码：</strong></p>
+<pre><code class="language-python">plt.plot(o_x, o_y, &quot;ro&quot;, markersize=3)      # 绘制训练数据点
+plt.plot(o_x_test, y_test_preds, &quot;k&quot;)        # 绘制预测曲线
+plt.legend([&quot;train&quot;, &quot;test&quot;, &quot;pred&quot;])        # 3个标签，但只有2条曲线
+</code></pre>
+<p><strong>修复后：</strong></p>
+<pre><code class="language-python">plt.plot(o_x, o_y, &quot;ro&quot;, markersize=3)      # 绘制训练数据点
+plt.plot(o_x_test, y_test_preds, &quot;k&quot;)        # 绘制预测曲线
+plt.legend([&quot;train&quot;, &quot;pred&quot;])                # 2个标签，与曲线对应
+</code></pre>
+<hr />
+<h2 id="_7">代码结构分析</h2>
+<h3 id="_8">模型定义</h3>
+<pre><code class="language-python">class LinearModel(Model):
+    def __init__(self, ndim):
+        super(LinearModel, self).__init__()
+        # 权重参数
+        self.w = tf.Variable(
+            shape=[ndim, 1],
+            initial_value=tf.random.uniform([ndim, 1], minval=-0.1, maxval=0.1),
+            trainable=True,
+            name=&quot;weight&quot;
+        )
+        # 偏置参数
+        self.b = tf.Variable(
+            initial_value=tf.zeros([1], dtype=tf.float32),
+            trainable=True,
+            name=&quot;bias&quot;
+        )
+
+    @tf.function
+    def call(self, x):
+        y = tf.squeeze(tf.matmul(x, self.w), axis=1) + self.b
+        return y
+</code></pre>
+<p><strong>关键点：</strong></p>
+<ul>
+<li>模型定义了<code>w</code>和<code>b</code>两个可训练参数</li>
+<li><code>call</code>方法中正确使用了<code>self.b</code></li>
+<li>但训练函数中却遗漏了对<code>b</code>的更新</li>
+</ul>
+<h3 id="_9">基函数变换</h3>
+<p>文件中定义了三种基函数：</p>
+<ol>
+<li><strong>恒等基函数</strong>：直接返回输入</li>
+<li><strong>多项式基函数</strong>：将x映射为[x, x², x³, ...]</li>
+<li><strong>高斯基函数</strong>：将x映射为一组高斯分布特征</li>
+</ol>
+<pre><code class="language-python">def gaussian_basis(x, feature_num=10):
+    centers = np.linspace(0, 25, feature_num)  # 高斯中心点
+    width = 1.0 * (centers[1] - centers[0])    # 高斯宽度
+    # 计算高斯特征
+    out = (x - centers) / width
+    ret = np.exp(-0.5 * out ** 2)
+    return ret
+</code></pre>
+<hr />
+<h2 id="_10">影响分析</h2>
+<h3 id="_11">偏置未更新的影响</h3>
+<h4 id="1">1. 模型表达能力受限</h4>
+<p><strong>数学解释：</strong></p>
+<ul>
+<li>没有偏置项，模型只能表示通过原点的直线：<code>y = w·x</code></li>
+<li>有偏置项，模型可以表示任意位置的直线：<code>y = w·x + b</code></li>
+</ul>
+<p><strong>实际影响：</strong></p>
+<ul>
+<li>如果数据的真实分布不经过原点，模型无法准确拟合</li>
+<li>例如：房价预测中，即使面积为0，也可能有基础价格（偏置）</li>
+</ul>
+<h4 id="2">2. 预测精度下降</h4>
+<p><strong>误差分析：</strong></p>
+<ul>
+<li>设真实关系为 <code>y = 2x + 3</code></li>
+<li>无偏置模型只能学习 <code>y = 2x</code></li>
+<li>当x=1时，预测误差为3（真实值5，预测值2）</li>
+<li>当x=10时，预测误差为3（真实值23，预测值20）</li>
+</ul>
+<p><strong>相对误差：</strong></p>
+<ul>
+<li>小x值时，相对误差巨大</li>
+<li>大x值时，相对误差较小但绝对误差固定</li>
+</ul>
+<h4 id="3">3. 训练不稳定</h4>
+<p><strong>梯度传播：</strong></p>
+<ul>
+<li>偏置项提供额外的梯度路径</li>
+<li>没有偏置项，梯度只能通过权重传播</li>
+<li>可能导致梯度消失或爆炸</li>
+</ul>
+<h3 id="_12">图例不匹配的影响</h3>
+<h4 id="1_1">1. 可视化混淆</h4>
+<ul>
+<li>读者会寻找不存在的"test"曲线</li>
+<li>误解数据集的划分方式</li>
+</ul>
+<h4 id="2_1">2. 专业性降低</h4>
+<ul>
+<li>在学术论文或技术报告中显得不严谨</li>
+<li>影响对作者专业能力的信任</li>
+</ul>
+<hr />
+<h2 id="_13">修复验证</h2>
+<h3 id="_14">验证方法</h3>
+<ol>
+<li><strong>检查梯度计算</strong></li>
+</ol>
+<pre><code class="language-python"># 验证偏置梯度是否非零
+with tf.GradientTape() as tape:
+    y_pred = model(xs)
+    loss = tf.keras.losses.MSE(ys, y_pred)
+grads = tape.gradient(loss, [model.w, model.b])
+print(f&quot;权重梯度: {grads[0].numpy()}&quot;)
+print(f&quot;偏置梯度: {grads[1].numpy()}&quot;)  # 应该非零
+</code></pre>
+<ol>
+<li><strong>检查参数更新</strong></li>
+</ol>
+<pre><code class="language-python"># 记录训练前后的偏置值
+print(f&quot;训练前偏置: {model.b.numpy()}&quot;)
+# 执行训练...
+print(f&quot;训练后偏置: {model.b.numpy()}&quot;)  # 应该有变化
+</code></pre>
+<ol>
+<li>
+<p><strong>对比改进版文件</strong></p>
+</li>
+<li>
+<p>参考 <code>linear_regression-tf2.0-improved.py</code> 中的实现</p>
+</li>
+<li>该文件已经修复了偏置更新问题</li>
+</ol>
+<h3 id="_15">性能对比</h3>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>修复前</th>
+<th>修复后</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>训练集标准差</td>
+<td>较大</td>
+<td>较小</td>
+</tr>
+<tr>
+<td>测试集标准差</td>
+<td>较大</td>
+<td>较小</td>
+</tr>
+<tr>
+<td>收敛速度</td>
+<td>较慢</td>
+<td>较快</td>
+</tr>
+<tr>
+<td>模型表达能力</td>
+<td>受限</td>
+<td>完整</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="_16">相关文件</h2>
+<ul>
+<li><strong>原始文件</strong>：<code>src/chap02_linear_regression/linear_regression-tf2.0.py</code></li>
+<li><strong>改进版文件</strong>：<code>src/chap02_linear_regression/linear_regression-tf2.0-improved.py</code></li>
+<li><strong>其他相关</strong>：<code>src/chap02_linear_regression/linear_regression.py</code>（NumPy版本）</li>
+</ul>
+<hr />
+<h2 id="_17">扩展阅读</h2>
+<h3 id="_18">线性回归的变体</h3>
+<ol>
+<li><strong>岭回归</strong>：添加L2正则化，防止过拟合</li>
+<li><strong>Lasso回归</strong>：添加L1正则化，实现特征选择</li>
+<li><strong>弹性网络</strong>：结合L1和L2正则化</li>
+</ol>
+<h3 id="tensorflow">TensorFlow梯度计算</h3>
+<pre><code class="language-python"># 基本用法
+with tf.GradientTape() as tape:
+    y = model(x)
+    loss = loss_fn(y_true, y)
+gradients = tape.gradient(loss, model.trainable_variables)
+
+# 多参数梯度
+gradients = tape.gradient(loss, [param1, param2])
+optimizer.apply_gradients(zip(gradients, [param1, param2]))
+</code></pre>
+<h3 id="_19">偏置项的最佳实践</h3>
+<ol>
+<li><strong>始终包含偏置项</strong>：除非有明确的业务约束要求直线通过原点</li>
+<li><strong>初始化为0</strong>：偏置通常初始化为0，权重使用随机初始化</li>
+<li><strong>正则化注意</strong>：偏置项通常不参与正则化计算</li>
+</ol>
+              
+            </div>
+          </div><footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+      <p>OpenHUTB 版权所有 &copy; 2026</p>
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/OpenHUTB/nn" class="fa fa-github" style="color: #fcfcfc"> GitHub</a>
+        </span>
+    
+    
+    
+  </span>
+</div>
+    <script src="../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "..";</script>
+    <script src="../js/theme_extra.js"></script>
+    <script src="../js/theme.js"></script>
+      <script src="../extra.js"></script>
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.4/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+      <script src="../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

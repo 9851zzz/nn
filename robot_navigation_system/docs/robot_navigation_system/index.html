@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <link rel="shortcut icon" href="../../../img/favicon.ico" />
+    <title>机器人导航系统模块 - 神经网络</title>
+    <link rel="stylesheet" href="../../../css/theme.css" />
+    <link rel="stylesheet" href="../../../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+        <link href="../../../extra.css" rel="stylesheet" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "\u673a\u5668\u4eba\u5bfc\u822a\u7cfb\u7edf\u6a21\u5757";
+        var mkdocs_page_input_path = "robot_navigation_system\\docs\\robot_navigation_system\\README.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../../../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href="../../.." class="icon icon-home"> 神经网络
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../../../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../..">首页</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../../carla_yolo_detection/">自动驾驶感知系统</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../..">神经网络</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href="../../.." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">机器人导航系统模块</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/OpenHUTB/nn/edit/master/docs/robot_navigation_system/docs/robot_navigation_system/README.md" class="icon icon-github"> Edit on GitHub</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="_1">机器人导航系统模块</h1>
+<p>基于深度强化学习（DQN）的机器人自主导航系统，支持激光雷达环境感知、实时避障和路径规划。</p>
+<h2 id="_2">功能特性</h2>
+<ul>
+<li>✅ 激光雷达环境感知（360度扫描）</li>
+<li>✅ DQN深度强化学习路径规划</li>
+<li>✅ 实时避障系统</li>
+<li>✅ 丰富的可视化结果</li>
+<li>✅ 训练历史记录</li>
+</ul>
+<h2 id="_3">项目结构</h2>
+<pre><code class="language-text">robot_navigation_system/
+├── config.py              # 配置文件
+├── environment.py         # 导航环境模拟
+├── dqn_agent.py           # DQN强化学习代理
+├── visualization.py       # 可视化模块
+├── train.py               # 训练脚本
+├── test.py                # 测试脚本
+├── main.py                # 主入口
+├── requirements.txt       # 依赖列表
+├── results/               # 可视化结果目录
+│   ├── navigation_episode_*.png  # 导航截图
+│   ├── training_history.png      # 训练历史图
+│   └── lidar_heatmap.png         # 激光雷达热力图
+└── README.md              # 项目说明
+</code></pre>
+<h2 id="_4">快速开始</h2>
+<pre><code class="language-bash"># 进入项目目录
+cd src/robot_navigation_system
+
+# 安装依赖
+pip install -r requirements.txt
+
+# 训练模型
+python train.py
+
+# 测试模型
+python test.py
+</code></pre>
+<h2 id="_5">配置参数</h2>
+<p>在<code>config.py</code>中可以调整以下参数：</p>
+<table>
+<thead>
+<tr>
+<th>参数类别</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>机器人参数</td>
+<td>半径、最大速度、角速度</td>
+</tr>
+<tr>
+<td>环境参数</td>
+<td>地图尺寸、网格大小</td>
+</tr>
+<tr>
+<td>激光雷达</td>
+<td>角度数、探测范围、噪声</td>
+</tr>
+<tr>
+<td>DQN参数</td>
+<td>学习率、折扣因子、ε衰减</td>
+</tr>
+<tr>
+<td>训练参数</td>
+<td>轮数、最大步数、奖励设置</td>
+</tr>
+</tbody>
+</table>
+<h2 id="_6">可视化结果</h2>
+<p>项目运行后会在<code>results/</code>目录生成：</p>
+<ol>
+<li><strong>navigation_episode_X.png</strong> - 每10轮训练的导航截图</li>
+<li><strong>training_history.png</strong> - 训练奖励、距离、步数历史图表</li>
+<li><strong>lidar_heatmap.png</strong> - 激光雷达数据极坐标热力图</li>
+<li><strong>test_navigation_result.png</strong> - 测试导航结果</li>
+</ol>
+<h2 id="_7">控制动作</h2>
+<table>
+<thead>
+<tr>
+<th>动作</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>前进</td>
+</tr>
+<tr>
+<td>1</td>
+<td>左转前进</td>
+</tr>
+<tr>
+<td>2</td>
+<td>右转前进</td>
+</tr>
+<tr>
+<td>3</td>
+<td>原地左转</td>
+</tr>
+<tr>
+<td>4</td>
+<td>原地右转</td>
+</tr>
+</tbody>
+</table>
+<h2 id="_8">奖励机制</h2>
+<ul>
+<li>✅ 到达目标: +100</li>
+<li>❌ 碰撞障碍物: -50</li>
+<li>⏭️ 每步惩罚: -0.1</li>
+</ul>
+<h2 id="_9">技术栈</h2>
+<ul>
+<li>Python 3.8+</li>
+<li>PyTorch 2.2+</li>
+<li>NumPy</li>
+<li>Matplotlib</li>
+<li>OpenCV</li>
+</ul>
+<h2 id="_10">参考文献</h2>
+<ul>
+<li>Mnih, V., et al. "Human-level control through deep reinforcement learning." Nature, 2015.</li>
+<li>Sutton, R. S., &amp; Barto, A. G. "Reinforcement learning: An introduction." MIT press, 2018.</li>
+</ul>
+              
+            </div>
+          </div><footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+      <p>OpenHUTB 版权所有 &copy; 2026</p>
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/OpenHUTB/nn" class="fa fa-github" style="color: #fcfcfc"> GitHub</a>
+        </span>
+    
+    
+    
+  </span>
+</div>
+    <script src="../../../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "../../..";</script>
+    <script src="../../../js/theme_extra.js"></script>
+    <script src="../../../js/theme.js"></script>
+      <script src="../../../extra.js"></script>
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.4/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+      <script src="../../../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>
