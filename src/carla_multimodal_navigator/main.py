@@ -163,6 +163,222 @@ class SimpleDrivingSystem:
         self.detected_signs = []  # 当前检测到的标志列表
         self.sign_detection_history = []  # 标志检测历史
         self.last_sign_update = 0.0  # 上次更新时间
+        
+        # 车辆型号相关
+        self.vehicle_models = {
+            'tesla.model3': {'name': 'Tesla Model 3', 'type': 'sedan'},
+            'toyota.prius': {'name': 'Toyota Prius', 'type': 'hybrid'},
+            'audi.a2': {'name': 'Audi A2', 'type': 'sedan'},
+            'ford.focus': {'name': 'Ford Focus', 'type': 'sedan'},
+            'mercedes-benz.coupe': {'name': 'Mercedes Coupe', 'type': 'coupe'},
+            'volkswagen.t2': {'name': 'Volkswagen T2', 'type': 'van'},
+            'nissan.micra': {'name': 'Nissan Micra', 'type': 'hatchback'},
+            'mini.cooper': {'name': 'Mini Cooper', 'type': 'compact'}
+        }
+        self.current_model_index = 0  # 当前车型索引
+        self.current_model_name = 'tesla.model3'  # 当前车型ID
+        self.available_models = []  # 可用车型列表（连接后初始化）
+        
+        # 自动泊车相关
+        self.auto_parking_enabled = False  # 自动泊车开关
+        self.parking_state = 'IDLE'  # IDLE/SEARCHING/FOUND/REVERSING/ADJUSTING/COMPLETE
+        self.parking_progress = 0.0  # 泊车进度 0-1
+        self.parking_target_x = 0.0  # 目标停车位X
+        self.parking_target_y = 0.0  # 目标停车位Y
+        self.parking_target_angle = 0.0  # 目标停车角度
+        self.parking_step = 0  # 当前泊车步骤
+        self.parking_timer = 0.0  # 泊车计时器
+
+    def init_available_models(self):
+        """初始化可用车型列表（检查哪些车型在CARLA中存在）"""
+        blueprint_library = self.world.get_blueprint_library()
+        
+        # 先获取所有可用的车辆蓝图
+        all_vehicle_bps = blueprint_library.filter('vehicle.*')
+        available_bp_names = [bp.id.split('.')[-2] + '.' + bp.id.split('.')[-1] for bp in all_vehicle_bps]
+        
+        # 检查我们定义的车型哪些是可用的
+        self.available_models = []
+        for model_id, model_info in self.vehicle_models.items():
+            # 检查完整ID和简化ID
+            full_id = f'vehicle.{model_id}'
+            short_id = model_id
+            
+            # 检查是否存在
+            exists = False
+            for bp in all_vehicle_bps:
+                if bp.id == full_id or short_id in bp.id:
+                    exists = True
+                    break
+            
+            if exists:
+                self.available_models.append(model_id)
+        
+        # 如果没有可用车型，使用CARLA提供的第一个车型
+        if not self.available_models:
+            if all_vehicle_bps:
+                first_bp = all_vehicle_bps[0]
+                model_id = first_bp.id.split('.')[-2] + '.' + first_bp.id.split('.')[-1]
+                self.available_models = [model_id]
+                self.vehicle_models[model_id] = {'name': first_bp.id, 'type': 'unknown'}
+        
+        print(f"\n可用车型 ({len(self.available_models)}):")
+        for model_id in self.available_models:
+            info = self.vehicle_models.get(model_id, {'name': model_id, 'type': 'unknown'})
+            print(f"  - {info['name']} ({info['type']})")
+        
+        # 确保当前车型在可用列表中
+        if self.current_model_name not in self.available_models and self.available_models:
+            self.current_model_name = self.available_models[0]
+            self.current_model_index = 0
+
+    def auto_parking_control(self, vehicle):
+        """完整倒车入库控制逻辑 - 模拟真实倒车入库动作"""
+        if not self.auto_parking_enabled:
+            return 0.0, 0.0, 0.0
+        
+        location = vehicle.get_location()
+        
+        if self.parking_state == 'IDLE':
+            # 阶段0: 开始，记录初始状态
+            self.parking_state = 'BRAKE'
+            self.parking_progress = 0.0
+            self.parking_timer = 0.0
+            # 记录起始位置
+            self.parking_start_x = location.x
+            self.parking_start_y = location.y
+            print("倒车入库: 开始刹车...")
+        
+        elif self.parking_state == 'BRAKE':
+            # 阶段1: 刹车停止 (约1秒)
+            self.parking_timer += 0.1
+            self.parking_progress = min(0.1, self.parking_timer / 1.0)
+            
+            if self.parking_timer > 1.0:
+                self.parking_state = 'REVERSE_1'
+                self.parking_timer = 0.0
+                print("倒车入库: 开始倒车，向右打死...")
+            
+            return 0.0, 1.0, 0.0
+        
+        elif self.parking_state == 'REVERSE_1':
+            # 阶段2: 倒车并向右打死方向盘 (约2.5秒)
+            self.parking_timer += 0.1
+            self.parking_progress = 0.1 + min(0.25, self.parking_timer / 2.5)
+            
+            if self.parking_timer > 2.5:
+                self.parking_state = 'REVERSE_2'
+                self.parking_timer = 0.0
+                print("倒车入库: 回正方向盘继续倒车...")
+            else:
+                # 倒车时向右打死
+                throttle = 0.4
+                brake = 0.0
+                steer = 0.5  # 向右打死
+                return throttle, brake, steer
+        
+        elif self.parking_state == 'REVERSE_2':
+            # 阶段3: 回正方向盘继续倒车 (约2秒)
+            self.parking_timer += 0.1
+            self.parking_progress = 0.35 + min(0.2, self.parking_timer / 2.0)
+            
+            if self.parking_timer > 2.0:
+                self.parking_state = 'REVERSE_3'
+                self.parking_timer = 0.0
+                print("倒车入库: 向左打死调整...")
+            else:
+                # 回正方向盘倒车
+                throttle = 0.35
+                brake = 0.0
+                steer = 0.0  # 回正
+                return throttle, brake, steer
+        
+        elif self.parking_state == 'REVERSE_3':
+            # 阶段4: 向左打死调整车身 (约2秒)
+            self.parking_timer += 0.1
+            self.parking_progress = 0.55 + min(0.2, self.parking_timer / 2.0)
+            
+            if self.parking_timer > 2.0:
+                self.parking_state = 'REVERSE_4'
+                self.parking_timer = 0.0
+                print("倒车入库: 回正并微调...")
+            else:
+                # 向左打死调整
+                throttle = 0.3
+                brake = 0.0
+                steer = -0.5  # 向左打死
+                return throttle, brake, steer
+        
+        elif self.parking_state == 'REVERSE_4':
+            # 阶段5: 回正并微调位置 (约2秒)
+            self.parking_timer += 0.1
+            self.parking_progress = 0.75 + min(0.15, self.parking_timer / 2.0)
+            
+            if self.parking_timer > 2.0:
+                self.parking_state = 'STOP'
+                self.parking_timer = 0.0
+                print("倒车入库: 停车...")
+            else:
+                # 回正微调
+                throttle = 0.2
+                brake = 0.0
+                steer = 0.1  # 轻微向右调整
+                return throttle, brake, steer
+        
+        elif self.parking_state == 'STOP':
+            # 阶段6: 最终停车 (约1秒)
+            self.parking_timer += 0.1
+            self.parking_progress = 0.9 + min(0.1, self.parking_timer / 1.0)
+            
+            if self.parking_timer > 1.0:
+                self.parking_state = 'COMPLETE'
+                self.parking_progress = 1.0
+                print("倒车入库: 完成!")
+            
+            return 0.0, 1.0, 0.0
+        
+        elif self.parking_state == 'COMPLETE':
+            # 完成阶段 - 持续刹车保持静止
+            return 0.0, 1.0, 0.0
+        
+        return 0.0, 0.0, 0.0
+
+    def draw_parking_overlay(self, image):
+        """在画面上绘制倒车入库信息"""
+        if not self.auto_parking_enabled:
+            return
+        
+        height, width = image.shape[:2]
+        
+        # 倒车状态文字 - 更友好的显示
+        state_display = {
+            'IDLE': 'READY',
+            'BRAKE': 'BRAKING',
+            'REVERSE_1': 'REVERSE RIGHT',
+            'REVERSE_2': 'REVERSE STRAIGHT',
+            'REVERSE_3': 'REVERSE LEFT',
+            'REVERSE_4': 'REVERSE ADJUST',
+            'STOP': 'STOPPING',
+            'COMPLETE': 'COMPLETE'
+        }
+        state_text = f"PARKING: {state_display.get(self.parking_state, self.parking_state)}"
+        cv2.putText(image, state_text, (10, height - 60), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+        
+        # 泊车进度条
+        progress_width = 200
+        progress_height = 15
+        progress_x = 10
+        progress_y = height - 30
+        cv2.rectangle(image, (progress_x, progress_y), 
+                      (progress_x + progress_width, progress_y + progress_height), 
+                      (200, 200, 200), 2)
+        cv2.rectangle(image, (progress_x, progress_y), 
+                      (progress_x + int(progress_width * self.parking_progress), progress_y + progress_height), 
+                      (0, 255, 0), -1)
+        cv2.putText(image, f"{int(self.parking_progress * 100)}%", 
+                    (progress_x + 80, progress_y + 12), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
 
     def connect(self):
         """连接到CARLA服务器"""
@@ -187,6 +403,9 @@ class SimpleDrivingSystem:
             settings.fixed_delta_seconds = None
             self.world.apply_settings(settings)
 
+            # 初始化可用车型列表
+            self.init_available_models()
+            
             print("连接成功！")
             return True
 
@@ -206,11 +425,26 @@ class SimpleDrivingSystem:
             # 获取蓝图库
             blueprint_library = self.world.get_blueprint_library()
 
-            # 选择车辆蓝图
-            vehicle_bp = blueprint_library.find('vehicle.tesla.model3')
+            # 选择车辆蓝图（使用当前选择的型号）
+            vehicle_bp = None
+            try:
+                vehicle_bp = blueprint_library.find(f'vehicle.{self.current_model_name}')
+            except Exception as e:
+                print(f"未找到 {self.current_model_name} 蓝图: {e}")
+            
+            # 如果没找到，尝试在可用车型中找一个
             if not vehicle_bp:
-                print("未找到特斯拉蓝图，尝试其他车辆...")
-                vehicle_bp = blueprint_library.filter('vehicle.*')[0]
+                print("尝试使用其他可用车辆...")
+                all_vehicle_bps = blueprint_library.filter('vehicle.*')
+                if all_vehicle_bps:
+                    vehicle_bp = all_vehicle_bps[0]
+                    # 更新当前车型
+                    bp_id = vehicle_bp.id
+                    self.current_model_name = bp_id.split('.')[-2] + '.' + bp_id.split('.')[-1]
+                    print(f"使用替代车型: {self.current_model_name}")
+                else:
+                    print("错误：没有可用的车辆蓝图！")
+                    return False
 
             vehicle_bp.set_attribute('color', '255,0,0')  # 红色
 
@@ -241,6 +475,7 @@ class SimpleDrivingSystem:
             if self.vehicle:
                 print(f"车辆生成成功！ID: {self.vehicle.id}")
                 print(f"位置: {spawn_point.location}")
+                print(f"车型: {self.vehicle_models[self.current_model_name]['name']}")
 
                 # 禁用自动驾驶
                 self.vehicle.set_autopilot(False)
@@ -253,6 +488,29 @@ class SimpleDrivingSystem:
         except Exception as e:
             print(f"生成车辆时出错: {e}")
             return False
+
+    def change_vehicle_model(self, direction='next'):
+        """切换车辆型号（只在可用车型中循环）"""
+        # 使用可用车型列表
+        if not self.available_models:
+            print("错误：没有可用的车型！")
+            return None
+        
+        model_keys = self.available_models
+        
+        if direction == 'next':
+            self.current_model_index = (self.current_model_index + 1) % len(model_keys)
+        else:
+            self.current_model_index = (self.current_model_index - 1) % len(model_keys)
+        
+        self.current_model_name = model_keys[self.current_model_index]
+        model_info = self.vehicle_models.get(self.current_model_name, {'name': self.current_model_name, 'type': 'unknown'})
+        
+        print(f"\n切换到车型: {model_info['name']} ({model_info['type']})")
+        print(f"可用车型: {len(model_keys)} 种")
+        print("请按 R 键重置车辆以应用新车型")
+        
+        return model_info['name']
 
     def setup_camera(self):
         """设置多相机系统"""
@@ -799,6 +1057,18 @@ class SimpleDrivingSystem:
                                 (20, 310), cv2.FONT_HERSHEY_SIMPLEX,
                                 0.6, (255, 255, 0), 2)
                 
+                # 添加自动泊车状态
+                if self.auto_parking_enabled:
+                    parking_color = (0, 255, 255)
+                    cv2.putText(display_img, f"PARKING: {self.parking_state}",
+                                (20, 350), cv2.FONT_HERSHEY_SIMPLEX,
+                                0.8, parking_color, 2)
+                    # 泊车进度条
+                    progress_width = 200
+                    progress_height = 12
+                    cv2.rectangle(display_img, (20, 365), (20 + progress_width, 365 + progress_height), (200, 200, 200), 2)
+                    cv2.rectangle(display_img, (20, 365), (20 + int(progress_width * self.parking_progress), 365 + progress_height), (0, 255, 0), -1)
+                
                 return display_img
         else:
             # 全部视角模式 - 2x3网格
@@ -915,6 +1185,7 @@ class SimpleDrivingSystem:
         print("  q - 退出程序")
         print("  r - 重置车辆")
         print("  s - 紧急停止")
+        print("  m - 切换车辆型号")
         print("  l - 切换车道保持辅助(LKA)")
         print("  k - 切换交通标志识别(TSR)")
         print("  w - 切换自动天气变化")
@@ -927,6 +1198,7 @@ class SimpleDrivingSystem:
         print("  t - 切换到下一个视角 (仅在单一视角模式下)")
         print("\n视角: 1-前视 2-后视 3-左视 4-右视 5-鸟瞰 6-第三人称")
         print("\n天气控制: W-切换自动天气 7-晴天 8-雨天 9-雾天 0-白天/黑夜")
+        print("\n车辆型号: M-切换车型 切换后按R重置车辆")
         print("\n开始自动驾驶...\n")
 
         frame_count = 0
@@ -951,22 +1223,38 @@ class SimpleDrivingSystem:
                 # 检测交通标志
                 self.detect_traffic_signs()
 
-                # 获取控制指令（包含LKA辅助）
-                throttle, brake, steer = self.controller.get_control(
-                    speed, 
-                    lka_enabled=self.lka_enabled, 
-                    lane_offset=self.lane_offset
-                )
-
-                # 应用控制
-                control = carla.VehicleControl(
-                    throttle=float(throttle),
-                    brake=float(brake),
-                    steer=float(steer),
-                    hand_brake=False,
-                    reverse=False
-                )
-                self.vehicle.apply_control(control)
+                # 检查自动泊车状态
+                if self.auto_parking_enabled:
+                    # 自动泊车模式（包括COMPLETE状态，持续刹车）
+                    park_throttle, park_brake, park_steer = self.auto_parking_control(self.vehicle)
+                    throttle, brake, steer = park_throttle, park_brake, park_steer
+                    
+                    # 判断是否需要倒车模式
+                    is_reversing = self.parking_state in ['REVERSE_1', 'REVERSE_2', 'REVERSE_3', 'REVERSE_4']
+                    
+                    control = carla.VehicleControl(
+                        throttle=float(throttle),
+                        brake=float(brake),
+                        steer=float(steer),
+                        hand_brake=False,
+                        reverse=is_reversing  # 只有倒车阶段设置为True
+                    )
+                    self.vehicle.apply_control(control)
+                else:
+                    # 正常驾驶模式
+                    throttle, brake, steer = self.controller.get_control(
+                        speed, 
+                        lka_enabled=self.lka_enabled, 
+                        lane_offset=self.lane_offset
+                    )
+                    control = carla.VehicleControl(
+                        throttle=float(throttle),
+                        brake=float(brake),
+                        steer=float(steer),
+                        hand_brake=False,
+                        reverse=False
+                    )
+                    self.vehicle.apply_control(control)
 
                 # 创建多视角显示
                 display_img = self.create_multi_view_display(speed, throttle, steer)
@@ -985,6 +1273,9 @@ class SimpleDrivingSystem:
                         throttle=0.0, brake=1.0, hand_brake=True
                     ))
                     print("紧急停止")
+                elif key == ord('m'):
+                    # 切换车辆型号
+                    model_name = self.change_vehicle_model('next')
                 elif key == ord('l'):
                     # 切换车道保持辅助(LKA)
                     self.lka_enabled = not self.lka_enabled
@@ -995,6 +1286,18 @@ class SimpleDrivingSystem:
                     self.tsr_enabled = not self.tsr_enabled
                     status = "开启" if self.tsr_enabled else "关闭"
                     print(f"交通标志识别(TSR)已{status}")
+                elif key == ord('p'):
+                    # 切换倒车入库
+                    self.auto_parking_enabled = not self.auto_parking_enabled
+                    if self.auto_parking_enabled:
+                        self.parking_state = 'IDLE'
+                        self.parking_progress = 0.0
+                        print("倒车入库已开启 - 开始刹车...")
+                    else:
+                        # 重置状态
+                        self.parking_state = 'IDLE'
+                        self.parking_progress = 0.0
+                        print("倒车入库已关闭")
                 elif key == ord('w'):
                     # 切换自动天气变化
                     self.auto_weather_change = not self.auto_weather_change
@@ -1083,17 +1386,32 @@ class SimpleDrivingSystem:
             print(f"生成NPC车辆时出错: {e}")
 
     def reset_vehicle(self):
-        """重置车辆位置"""
+        """重置车辆位置并应用新车型"""
         print("重置车辆...")
 
-        spawn_points = self.world.get_map().get_spawn_points()
-        if spawn_points:
-            new_spawn_point = random.choice(spawn_points)
-            self.vehicle.set_transform(new_spawn_point)
-            print(f"车辆已重置到新位置: {new_spawn_point.location}")
-
-            # 等待重置完成
-            time.sleep(0.5)
+        # 保存当前传感器状态
+        tsr_enabled = self.tsr_enabled
+        lka_enabled = self.lka_enabled
+        
+        # 清理现有资源
+        self.cleanup()
+        
+        # 重新生成车辆（使用当前选择的车型）
+        if self.spawn_vehicle():
+            # 重新设置传感器
+            self.setup_camera()
+            self.setup_speed_sensor()
+            
+            # 恢复传感器状态
+            self.tsr_enabled = tsr_enabled
+            self.lka_enabled = lka_enabled
+            
+            # 设置控制器
+            self.setup_controller()
+            
+            print("车辆重置完成！")
+        else:
+            print("车辆重置失败")
 
     def cleanup(self):
         """清理资源"""

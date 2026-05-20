@@ -79,11 +79,20 @@ class CarlaClient:
             self.client = carla.Client(self.host, self.port)
             self.client.set_timeout(self.timeout)
             self.world = self.client.get_world()
+            
+            # 设置世界为同步模式，确保自动驾驶正常工作
+            settings = self.world.get_settings()
+            settings.synchronous_mode = True
+            settings.fixed_delta_seconds = 0.05  # 20 FPS
+            self.world.apply_settings(settings)
+            
             self.blueprint_library = self.world.get_blueprint_library()
             # 创建 Debug Helper 用于绘制
             self.debug_helper = self.world.debug
             # 获取 spectator 用于第三人称跟随
             self.spectator = self.world.get_spectator()
+            # 保存生成点列表用于重置
+            self.spawn_points = self.world.get_map().get_spawn_points()
             print("[INFO] CARLA 连接成功！")
             return True
         except Exception as e:
@@ -106,11 +115,29 @@ class CarlaClient:
             print(f"[INFO] 主车辆生成成功: {self.vehicle.type_id}")
             
             # 获取交通管理器并启用自动驾驶
-            traffic_manager = self.client.get_trafficmanager(8000)
-            traffic_manager.set_global_distance_to_leading_vehicle(2.0)
-            traffic_manager.set_synchronous_mode(True)
-            self.vehicle.set_autopilot(True, traffic_manager.get_port())
-            self.vehicle.apply_control(carla.VehicleControl(throttle=0.5))
+            self.traffic_manager = self.client.get_trafficmanager(8000)
+            
+            # 关键设置：禁用Traffic Manager同步模式（因为世界已经是同步的）
+            self.traffic_manager.set_synchronous_mode(False)
+            
+            # 设置自动驾驶参数
+            self.traffic_manager.set_global_distance_to_leading_vehicle(3.0)  # 跟车距离
+            self.traffic_manager.set_global_speed_limit(50.0)  # 限速50 km/h
+            
+            # 为车辆设置自动驾驶
+            self.vehicle.set_autopilot(True, self.traffic_manager.get_port())
+            
+            # 设置车辆的自动驾驶行为
+            self.traffic_manager.ignore_lights_percentage(self.vehicle, 0)  # 遵守红绿灯
+            self.traffic_manager.ignore_signs_percentage(self.vehicle, 0)   # 遵守标志
+            self.traffic_manager.ignore_vehicles_percentage(self.vehicle, 0) # 不忽略其他车辆
+            self.traffic_manager.ignore_walkers_percentage(self.vehicle, 0)  # 不忽略行人
+            
+            # 设置更激进的驾驶行为
+            self.traffic_manager.set_desired_speed(self.vehicle, 45.0)  # 期望速度
+            self.traffic_manager.set_distance_to_leading_vehicle(self.vehicle, 3.0)  # 跟车距离
+            
+            print("[INFO] 自动驾驶已启用！")
             
             # 生成NPC车辆
             if spawn_npc:
@@ -126,8 +153,8 @@ class CarlaClient:
         try:
             # 获取交通管理器
             traffic_manager = self.client.get_trafficmanager(8000)
-            traffic_manager.set_global_distance_to_leading_vehicle(1.0)
-            traffic_manager.global_percentage_speed_difference(50.0)
+            traffic_manager.set_global_distance_to_leading_vehicle(2.0)
+            traffic_manager.global_percentage_speed_difference(30.0)
             
             blueprints = self.blueprint_library.filter('vehicle.*')
             spawn_points = self.world.get_map().get_spawn_points()
@@ -147,6 +174,13 @@ class CarlaClient:
             
         except Exception as e:
             print(f"[WARNING] 生成NPC车辆失败: {e}")
+    
+    def tick(self):
+        """推进世界模拟（同步模式下必须调用）"""
+        if self.world:
+            self.world.tick()
+            return True
+        return False
 
     def setup_camera(self):
         """设置多摄像头系统"""
@@ -216,7 +250,7 @@ class CarlaClient:
             self.image_queue.put(img)
         except:
             pass
-
+    
     def draw_detection_in_carla(self, detections, classes):
         """
         在 CARLA 模拟器中绘制检测结果
